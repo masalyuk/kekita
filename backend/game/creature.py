@@ -36,8 +36,6 @@ class Creature(ABC):
         self.alive = True
         self.stage = stage
         self.traits = traits  # Store original traits
-        # Randomly assign a poison food type for this creature
-        self.poison_food_type = random.choice(self.FOOD_TYPES)
     
     @abstractmethod
     def to_dict(self):

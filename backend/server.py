@@ -142,6 +142,10 @@ async def start_game(request: GameStartRequest):
     world = World(width=20, height=20)
     world.spawn_resources(num_food=50)  # Increased initial food amount
 
+    # Store food_type_config in game state to persist across attempts
+    food_type_config = world.food_type_config.copy()
+    print(f"[start_game] Stored food_type_config for persistence across attempts")
+
     # Generate sprite once for all creatures from same prompt
     sprite_url = None
     try:
@@ -169,7 +173,7 @@ async def start_game(request: GameStartRequest):
             y = random.randint(0, world.height - 1)
         
         cell = Cell(creature_id=creature_id, traits=traits, x=x, y=y, player_id=1)
-        print(f"[start_game] Creature {creature_id} at ({x}, {y}), color: {cell.color}, poison_food_type: {cell.poison_food_type}")
+        print(f"[start_game] Creature {creature_id} at ({x}, {y}), color: {cell.color}")
         
         # Assign same sprite URL to all creatures from same prompt
         if sprite_url:
@@ -195,7 +199,8 @@ async def start_game(request: GameStartRequest):
         'waiting_for_prompts': False,
         'attempt_number': 1,
         'max_attempts': 3,
-        'waiting_for_prompt': False
+        'waiting_for_prompt': False,
+        'food_type_config': food_type_config  # Store food config to persist across attempts
     }
 
     return {
@@ -363,6 +368,11 @@ async def _restart_attempt(game, world, request, current_stage):
     """Restart attempt after population death: reset creatures, apply new traits, keep world state."""
     try:
         print(f"[restart_attempt] Restarting attempt {game['attempt_number'] + 1}")
+        
+        # Ensure world uses the stored food_type_config (persist across attempts)
+        if 'food_type_config' in game:
+            world.food_type_config = game['food_type_config'].copy()
+            print(f"[restart_attempt] Restored food_type_config from game state (persisting across attempts)")
         
         # Reset energy events tracker for new attempt
         if hasattr(world, 'reset_energy_events'):

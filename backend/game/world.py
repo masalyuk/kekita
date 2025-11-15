@@ -15,13 +15,15 @@ class World:
         'grapes': '🍇'
     }
 
-    def __init__(self, width=20, height=20):
+    def __init__(self, width=20, height=20, food_type_config=None):
         """
         Initialize the world.
         
         Args:
             width: Grid width
             height: Grid height
+            food_type_config: Optional dict with food type configuration to reuse.
+                            If None, generates a new random configuration.
         """
         self.width = width
         self.height = height
@@ -33,6 +35,36 @@ class World:
         self.max_stage = 1  # Track highest stage present
         # Track unique energy events per attempt: set of (action, object, energy_change) tuples
         self.energy_events = set()
+        
+        # Initialize food type configuration
+        # If provided, reuse existing config; otherwise generate new random config
+        if food_type_config is not None:
+            self.food_type_config = food_type_config.copy()  # Use provided config
+            print(f"[DEBUG] Food Type Configuration (reused from game start):")
+        else:
+            # Each food type gets a random base energy value (25-35 range for similarity)
+            # One type will be randomly selected as lethal
+            # Each type will be randomly assigned as positive (adds energy) or negative (removes energy)
+            self.food_type_config = {}
+            lethal_type = random.choice(self.FOOD_TYPES)
+            
+            for food_type in self.FOOD_TYPES:
+                base_energy = random.randint(25, 35)
+                is_positive = random.choice([True, False])
+                is_lethal = (food_type == lethal_type)
+                
+                self.food_type_config[food_type] = {
+                    'base_energy': base_energy,
+                    'is_positive': is_positive,
+                    'is_lethal': is_lethal
+                }
+            print(f"[DEBUG] Food Type Configuration (new game):")
+        
+        # Log the food type configuration
+        for food_type, config in self.food_type_config.items():
+            effect = "adds" if config['is_positive'] else "removes"
+            lethal = " (LETHAL)" if config['is_lethal'] else ""
+            print(f"[DEBUG]   {food_type}: base_energy={config['base_energy']}, {effect} energy{lethal}")
 
     def add_cell(self, creature):
         """Add creature to world (works for Cell, Multicellular, Organism)."""
@@ -43,89 +75,70 @@ class World:
 
     def spawn_resources(self, num_food=50, num_poison=0):
         """
-        Generate food and poison at random positions with 50/50 distribution.
+        Generate food items at random positions using type-based configuration.
         
         Args:
-            num_food: Total number of items to spawn (will be split 50/50 food/poison)
+            num_food: Total number of food items to spawn
             num_poison: Ignored (kept for compatibility)
         """
-        # Calculate 50/50 split
-        total_items = num_food
-        num_food_items = total_items // 2
-        num_poison_items = total_items - num_food_items
-        
-        # Determine which poison type is lethal (one of the food types)
-        lethal_poison_type = random.choice(self.FOOD_TYPES)
-        
-        # Spawn food items (50%)
-        for _ in range(num_food_items):
+        # Spawn food items
+        for _ in range(num_food):
             x = random.randint(0, self.width - 1)
             y = random.randint(0, self.height - 1)
             # Avoid spawning on existing cells
             while any(c.x == x and c.y == y for c in self.cells):
                 x = random.randint(0, self.width - 1)
                 y = random.randint(0, self.height - 1)
+            
             # Randomly assign a food type
             food_type = random.choice(self.FOOD_TYPES)
-            # Random energy gain between 10 and 50
-            energy_value = random.randint(10, 50)
+            
+            # Get base energy from config and apply ±10% variation
+            base_energy = self.food_type_config[food_type]['base_energy']
+            energy_value = base_energy * random.uniform(0.9, 1.1)
+            
+            # Make energy negative if this type removes energy
+            if not self.food_type_config[food_type]['is_positive']:
+                energy_value = -energy_value
+            
+            # Round to integer for cleaner values
+            energy_value = int(round(energy_value))
+            
             self.food.append({
                 'x': x,
                 'y': y,
                 'id': self._resource_id_counter,
                 'type': food_type,
-                'is_poison': False,
-                'energy_value': energy_value,
-                'lethal': False
+                'energy_value': energy_value
             })
             self._resource_id_counter += 1
         
-        # Spawn poison items (50%)
-        for _ in range(num_poison_items):
-            x = random.randint(0, self.width - 1)
-            y = random.randint(0, self.height - 1)
-            # Avoid spawning on existing cells
-            while any(c.x == x and c.y == y for c in self.cells):
-                x = random.randint(0, self.width - 1)
-                y = random.randint(0, self.height - 1)
-            # Randomly assign a food type (poison looks like food)
-            poison_type = random.choice(self.FOOD_TYPES)
-            # Random energy loss between 10 and 50
-            energy_value = -random.randint(10, 50)
-            # Check if this is the lethal poison type
-            is_lethal = (poison_type == lethal_poison_type)
-            self.food.append({
-                'x': x,
-                'y': y,
-                'id': self._resource_id_counter,
-                'type': poison_type,
-                'is_poison': True,
-                'energy_value': energy_value,
-                'lethal': is_lethal
-            })
-            self._resource_id_counter += 1
-        
-        # Debug logging: print lists of food vs poison
+        # Debug logging: print lists of food with their types
         self._debug_log_food_poison()
 
     def _debug_log_food_poison(self):
-        """Print debug logs showing which items are food and which are poison."""
-        safe_food = [f for f in self.food if not f.get('is_poison', False)]
-        poison_items = [f for f in self.food if f.get('is_poison', False)]
+        """Print debug logs showing food items with their type properties."""
+        print(f"[DEBUG] Food Summary (Total items: {len(self.food)})")
         
-        print(f"[DEBUG] Food/Poison Summary (Total items: {len(self.food)})")
-        print(f"[DEBUG] Safe Food ({len(safe_food)} items):")
-        for food in safe_food:
+        # Group food by type for better readability
+        food_by_type = {}
+        for food in self.food:
             food_type = food.get('type', 'unknown')
-            energy = food.get('energy_value', 0)
-            print(f"[DEBUG]   - {food_type} @ ({food['x']}, {food['y']}) ID:{food['id']} energy:+{energy}")
+            if food_type not in food_by_type:
+                food_by_type[food_type] = []
+            food_by_type[food_type].append(food)
         
-        print(f"[DEBUG] Poison ({len(poison_items)} items):")
-        for poison in poison_items:
-            poison_type = poison.get('type', 'unknown')
-            energy = poison.get('energy_value', 0)
-            lethal = "LETHAL" if poison.get('lethal', False) else "regular"
-            print(f"[DEBUG]   - {poison_type} @ ({poison['x']}, {poison['y']}) ID:{poison['id']} energy:{energy} ({lethal})")
+        for food_type, items in food_by_type.items():
+            config = self.food_type_config.get(food_type, {})
+            effect = "adds" if config.get('is_positive', True) else "removes"
+            lethal = " (LETHAL)" if config.get('is_lethal', False) else ""
+            print(f"[DEBUG] {food_type} ({len(items)} items) - {effect} energy{lethal}:")
+            for food in items[:5]:  # Show first 5 items of each type
+                energy = food.get('energy_value', 0)
+                sign = "+" if energy > 0 else ""
+                print(f"[DEBUG]   - {food_type} @ ({food['x']}, {food['y']}) ID:{food['id']} energy:{sign}{energy}")
+            if len(items) > 5:
+                print(f"[DEBUG]   ... and {len(items) - 5} more {food_type} items")
 
     def get_nearby(self, creature, radius=None):
         """
@@ -277,35 +290,37 @@ class World:
                     )
                 if food_item:
                     food_type = food_item.get('type', 'apple')
-                    is_poison = food_item.get('is_poison', False)
-                    energy_value = food_item.get('energy_value', 30 if not is_poison else -20)
-                    is_lethal = food_item.get('lethal', False)
+                    energy_value = food_item.get('energy_value', 0)
+                    
+                    # Get food type properties from config
+                    food_config = self.food_type_config.get(food_type, {})
+                    is_lethal = food_config.get('is_lethal', False)
                     
                     self.food.remove(food_item)
                     
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
                     
-                    if is_poison:
-                        # This is poison - check if it's lethal
-                        if is_lethal:
-                            # Lethal poison - kill immediately
-                            creature.energy = 0
-                            creature.alive = False
+                    # Check if this food type is lethal
+                    if is_lethal:
+                        # Lethal food - kill immediately
+                        creature.energy = 0
+                        creature.alive = False
+                        self.energy_events.add(('eat', food_type, energy_value))
+                        events.append(f"{stage_name} {creature.id} ate lethal {food_type} at ({food_item['x']}, {food_item['y']}) - DIED!")
+                    else:
+                        # Regular food - apply energy change
+                        # Apply stage 3 bonus if applicable (only for positive energy)
+                        if energy_value > 0 and creature.stage == 3 and hasattr(creature, 'parts') and creature.parts.get('mouth') == 'sharp':
+                            energy_value = int(energy_value * 1.33)  # 33% bonus
+                        
+                        if energy_value > 0:
+                            creature.energy = min(100, creature.energy + energy_value)
                             self.energy_events.add(('eat', food_type, energy_value))
-                            events.append(f"{stage_name} {creature.id} ate lethal poison {food_type} at ({food_item['x']}, {food_item['y']}) - DIED!")
+                            events.append(f"{stage_name} {creature.id} ate {food_type} at ({food_item['x']}, {food_item['y']}) - gained {energy_value} energy")
                         else:
-                            # Regular poison - reduce energy by random amount
                             creature.energy = max(0, creature.energy + energy_value)
                             self.energy_events.add(('eat', food_type, energy_value))
-                            events.append(f"{stage_name} {creature.id} ate poison {food_type} at ({food_item['x']}, {food_item['y']}) - lost {abs(energy_value)} energy!")
-                    else:
-                        # Normal food - gain random energy
-                        # Apply stage 3 bonus if applicable
-                        if creature.stage == 3 and hasattr(creature, 'parts') and creature.parts.get('mouth') == 'sharp':
-                            energy_value = int(energy_value * 1.33)  # 33% bonus
-                        creature.energy = min(100, creature.energy + energy_value)
-                        self.energy_events.add(('eat', food_type, energy_value))
-                        events.append(f"{stage_name} {creature.id} ate {food_type} at ({food_item['x']}, {food_item['y']}) - gained {energy_value} energy")
+                            events.append(f"{stage_name} {creature.id} ate {food_type} at ({food_item['x']}, {food_item['y']}) - lost {abs(energy_value)} energy!")
                     
                     detailed_events.append({
                         'creature_id': creature.id,
@@ -457,7 +472,7 @@ class World:
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
                     events.append(f"{stage_name} {creature.id} and {other_creature.id} tried to reproduce but no space available")
 
-            # Check if creature dies (skip if already dead from lethal poison)
+            # Check if creature dies (skip if already dead from lethal food)
             if creature.energy <= 0 and creature.alive:
                 creature.alive = False
                 stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
@@ -474,7 +489,7 @@ class World:
         # Remove dead cells (optional, or keep for visualization)
         # self.cells = [c for c in self.cells if c.alive]
 
-        # Respawn some resources more frequently (maintain 50/50 distribution)
+        # Respawn some resources more frequently
         if self.turn % 2 == 0:  # Every 2 turns instead of 5
             if len(self.food) < 30:  # Lower threshold: spawn when food < 30 instead of < 10
                 self.spawn_resources(num_food=10, num_poison=0)  # Spawn 10 items instead of 3
