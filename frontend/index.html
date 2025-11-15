@@ -1,7 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Evolution Game MVP - Stage-Based</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution Game MVP</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -45,6 +47,27 @@
             border-radius: 4px;
             font-size: 12px;
             min-height: 60px;
+            display: flex;
+            gap: 10px;
+        }
+        .trait-preview-content {
+            flex: 1;
+        }
+        .preview-sprite-container {
+            flex-shrink: 0;
+            width: 80px;
+            height: 80px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #f9f9f9;
+        }
+        .preview-sprite {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
         }
         .trait-preview.loading {
             color: #999;
@@ -95,6 +118,24 @@
             background: #45a049;
         }
         button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .confirm-btn {
+            padding: 8px 16px;
+            font-size: 14px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 8px;
+            width: 100%;
+        }
+        .confirm-btn:hover:not(:disabled) {
+            background: #1976D2;
+        }
+        .confirm-btn:disabled {
             background: #ccc;
             cursor: not-allowed;
         }
@@ -190,34 +231,29 @@
 </head>
 <body>
     <div id="container">
-        <h1>🧬 Evolution Game - Stage-Based</h1>
+        <h1>Evolution Game</h1>
 
-        <div class="prompt-section">
+        <div class="prompt-section" style="grid-template-columns: 1fr;">
             <div class="prompt-box">
-                <h2>Player 1</h2>
+                <h2>Your Creature</h2>
                 <textarea id="prompt1" placeholder="Describe your creature: e.g., 'Small blue herbivores, move fast, travel in groups of 20, cautious'"></textarea>
+                <button id="confirmBtn1" class="confirm-btn">Confirm</button>
                 <div id="preview1" class="trait-preview">
-                    <h4>Traits Preview</h4>
-                    <div class="trait-grid" id="traits1">
-                        <div style="color: #999; font-style: italic; grid-column: 1 / -1;">Enter a description to see traits...</div>
+                    <div class="trait-preview-content">
+                        <h4>Traits Preview</h4>
+                        <div class="trait-grid" id="traits1">
+                            <div style="color: #999; font-style: italic; grid-column: 1 / -1;">Enter a description to see traits...</div>
+                        </div>
                     </div>
-                </div>
-            </div>
-            <div class="prompt-box">
-                <h2>Player 2</h2>
-                <textarea id="prompt2" placeholder="Describe your creature: e.g., 'Large red carnivores, slow but strong, solitary hunters'"></textarea>
-                <div id="preview2" class="trait-preview">
-                    <h4>Traits Preview</h4>
-                    <div class="trait-grid" id="traits2">
-                        <div style="color: #999; font-style: italic; grid-column: 1 / -1;">Enter a description to see traits...</div>
-                    </div>
+                    <div id="sprite1" class="preview-sprite-container"></div>
                 </div>
             </div>
         </div>
 
         <button id="startBtn">Start Game</button>
 
-        <div id="status">Enter prompts and click Start Game</div>
+        <div id="status">Enter a prompt and click Start Game</div>
+        <div id="hearts" style="text-align: center; font-size: 24px; margin: 10px 0; color: #F44336;">❤️❤️❤️</div>
         <div id="stageTimer"></div>
 
         <canvas id="gameCanvas" width="600" height="600"></canvas>
@@ -230,28 +266,16 @@
 
     <!-- Results Modal -->
     <div id="resultsModal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
             <span class="close" onclick="document.getElementById('resultsModal').style.display='none'">&times;</span>
             <div id="resultsContent"></div>
-        </div>
-    </div>
-
-    <!-- Prompt Update Modal -->
-    <div id="promptUpdateModal" class="modal">
-        <div class="modal-content">
-            <h2>Describe Evolution for Next Stage</h2>
-            <p>How has your creature evolved? Describe new traits, abilities, or changes.</p>
-            <div class="prompt-section">
-                <div class="prompt-box">
-                    <h3>Player 1 Evolution</h3>
-                    <textarea id="promptUpdate1" placeholder="e.g., 'Now they have sharp claws, faster movement, and better defense'"></textarea>
-                </div>
-                <div class="prompt-box">
-                    <h3>Player 2 Evolution</h3>
-                    <textarea id="promptUpdate2" placeholder="e.g., 'Now they have sharp claws, faster movement, and better defense'"></textarea>
-                </div>
+            <!-- Prompt input for behavior update (shown when population dies) -->
+            <div id="promptUpdateSection" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
+                <h3>Update Behavior for Next Attempt</h3>
+                <p style="color: #666; font-size: 14px;">Describe how your creatures should adapt to survive better:</p>
+                <textarea id="promptUpdateInput" placeholder="e.g., 'Be more cautious, avoid enemies, focus on finding food faster'" style="width: 100%; height: 80px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; resize: vertical; box-sizing: border-box; margin-top: 10px;"></textarea>
+                <button id="submitPromptUpdateBtn" style="padding: 10px 20px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; width: 100%;">Update Behavior & Continue</button>
             </div>
-            <button id="updatePromptsBtn">Apply Evolution & Continue</button>
         </div>
     </div>
 

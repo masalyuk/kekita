@@ -28,7 +28,12 @@ class StageManager:
             return None
         
         # Deduct evolution cost
-        creature.energy -= creature.evolve_cost()
+        evolve_cost = creature.evolve_cost()
+        creature.energy -= evolve_cost
+        
+        # Track energy event in world
+        if hasattr(world, 'energy_events'):
+            world.energy_events.add(('evolve', None, -evolve_cost))
         
         # Evolve based on current stage
         if creature.stage == 1:
@@ -40,9 +45,10 @@ class StageManager:
                 y=creature.y,
                 player_id=creature.player_id
             )
-            # Transfer memory
-            new_creature.memory = creature.memory
             new_creature.energy = creature.energy
+            # Transfer sprite_url if it exists
+            if hasattr(creature, 'sprite_url'):
+                new_creature.sprite_url = creature.sprite_url
             
             # Replace in world
             world.cells = [c if c.id != creature.id else new_creature for c in world.cells]
@@ -59,9 +65,10 @@ class StageManager:
                     y=creature.y,
                     player_id=creature.player_id
                 )
-                # Transfer memory
-                new_creature.memory = creature.memory
                 new_creature.energy = creature.energy
+                # Transfer sprite_url if it exists
+                if hasattr(creature, 'sprite_url'):
+                    new_creature.sprite_url = creature.sprite_url
                 
                 # Remove from colony
                 if creature.colony:

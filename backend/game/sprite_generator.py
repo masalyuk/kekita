@@ -27,25 +27,45 @@ class SpriteGenerator:
         self.timeout = aiohttp.ClientTimeout(total=30)  # Gradio can take longer
         self.executor = ThreadPoolExecutor(max_workers=2)  # For running sync Gradio client
     
-    def _get_sprite_path(self, creature_id: int, stage: int, format: str = "png") -> Path:
+    def _get_prompt_hash(self, user_prompt: str, stage: int) -> str:
+        """
+        Generate consistent hash from prompt+stage for file naming.
+        
+        Args:
+            user_prompt: User's original creature description
+            stage: Evolution stage (1, 2, or 3)
+            
+        Returns:
+            Hex string hash (8 characters)
+        """
+        # Combine prompt and stage for unique hash
+        combined = f"{user_prompt}_{stage}"
+        prompt_hash = hashlib.md5(combined.encode()).hexdigest()[:8]
+        return prompt_hash
+    
+    def _get_sprite_path(self, prompt_hash: str, stage: int, format: str = "png") -> Path:
         """Get file path for sprite."""
-        filename = f"{creature_id}_{stage}.{format}"
+        filename = f"{prompt_hash}_{stage}.{format}"
         return self.sprite_dir / filename
     
-    def _get_sprite_url(self, creature_id: int, stage: int, format: str = "png") -> str:
+    def _get_sprite_url(self, prompt_hash: str, stage: int, format: str = "png") -> str:
         """Get URL path for sprite."""
-        filename = f"{creature_id}_{stage}.{format}"
+        filename = f"{prompt_hash}_{stage}.{format}"
         return f"/static/sprites/{filename}"
     
-    def _sprite_exists(self, creature_id: int, stage: int, format: str = "png") -> bool:
+    def _sprite_exists(self, prompt_hash: str, stage: int, format: str = "png") -> bool:
         """Check if sprite already exists."""
-        sprite_path = self._get_sprite_path(creature_id, stage, format)
+        sprite_path = self._get_sprite_path(prompt_hash, stage, format)
         return sprite_path.exists()
     
-    def _create_placeholder_sprite(self, creature_id: int, stage: int) -> Optional[bytes]:
+    def _create_placeholder_sprite(self, prompt_hash: str, stage: int) -> Optional[bytes]:
         """
         Create a simple placeholder sprite as fallback.
         Returns PNG bytes of a colored square.
+        
+        Args:
+            prompt_hash: Hash of the prompt (used for color selection)
+            stage: Evolution stage (1, 2, or 3)
         """
         try:
             from PIL import Image, ImageDraw
@@ -54,14 +74,16 @@ class SpriteGenerator:
             img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))  # Transparent background
             draw = ImageDraw.Draw(img)
             
-            # Draw a simple colored circle/square based on creature ID
+            # Draw a simple colored circle/square based on prompt hash
             colors = [
                 (33, 150, 243, 255),  # Blue
                 (244, 67, 54, 255),   # Red
                 (76, 175, 80, 255),   # Green
                 (255, 235, 59, 255), # Yellow
             ]
-            color = colors[(creature_id - 1) % len(colors)]
+            # Use hash to select color consistently
+            hash_int = int(prompt_hash, 16)
+            color = colors[hash_int % len(colors)]
             
             # Draw a circle
             margin = 8
@@ -232,26 +254,29 @@ class SpriteGenerator:
         force_regenerate: bool = False
     ) -> Optional[str]:
         """
-        Generate sprite for a creature.
+        Generate sprite for a prompt+stage combination.
         
         Args:
             user_prompt: User's original creature description
-            creature_id: Unique creature identifier
+            creature_id: Unique creature identifier (kept for logging/backward compatibility, not used for file naming)
             stage: Evolution stage (1, 2, or 3)
             force_regenerate: If True, regenerate even if sprite exists
             
         Returns:
-            Sprite URL path (e.g., "/static/sprites/1_1.png") or None if generation fails
+            Sprite URL path (e.g., "/static/sprites/a3f2b1c4_1.png") or None if generation fails
         """
+        # Calculate prompt hash for file naming
+        prompt_hash = self._get_prompt_hash(user_prompt, stage)
+        
         # Check cache first
-        if not force_regenerate and self._sprite_exists(creature_id, stage):
-            print(f"[SpriteGenerator] Using cached sprite for creature {creature_id} stage {stage}")
-            return self._get_sprite_url(creature_id, stage)
+        if not force_regenerate and self._sprite_exists(prompt_hash, stage):
+            print(f"[SpriteGenerator] Using cached sprite for prompt hash {prompt_hash} stage {stage}")
+            return self._get_sprite_url(prompt_hash, stage)
         
         try:
             # Format prompt for API
             api_prompt = self._create_prompt(user_prompt, stage)
-            print(f"[SpriteGenerator] Generating sprite for creature {creature_id} stage {stage}")
+            print(f"[SpriteGenerator] Generating sprite for prompt hash {prompt_hash} stage {stage} (creature_id={creature_id})")
             print(f"[SpriteGenerator] User prompt: {user_prompt[:100]}...")
             print(f"[SpriteGenerator] API prompt: {api_prompt[:100]}...")
             print(f"[SpriteGenerator] API base URL: {self.api_base_url}")
@@ -269,19 +294,19 @@ class SpriteGenerator:
                 print(f"[SpriteGenerator] ✗ Failed to generate sprite with Gradio API")
                 print(f"[SpriteGenerator] → Creating placeholder sprite as fallback")
                 # Create a simple placeholder sprite
-                sprite_data = self._create_placeholder_sprite(creature_id, stage)
+                sprite_data = self._create_placeholder_sprite(prompt_hash, stage)
                 if not sprite_data:
                     print(f"[SpriteGenerator] → Placeholder creation also failed, will use canvas drawing")
                     return None
                 print(f"[SpriteGenerator] ✓ Placeholder sprite created successfully")
             
             # Save sprite to file
-            sprite_path = self._get_sprite_path(creature_id, stage)
+            sprite_path = self._get_sprite_path(prompt_hash, stage)
             async with aiofiles.open(sprite_path, 'wb') as f:
                 await f.write(sprite_data)
             
             print(f"[SpriteGenerator] ✓ Sprite saved to {sprite_path}")
-            return self._get_sprite_url(creature_id, stage)
+            return self._get_sprite_url(prompt_hash, stage)
                 
         except aiohttp.ClientTimeout:
             print(f"[SpriteGenerator] ✗ Timeout generating sprite (exceeded {self.timeout.total}s)")
@@ -298,27 +323,76 @@ class SpriteGenerator:
             print(f"[SpriteGenerator] → Falling back gracefully (creature will use canvas drawing)")
             return None
     
+    def _get_preview_prompt_hash(self, user_prompt: str, stage: int) -> str:
+        """
+        Calculate preview prompt hash (same as regular hash, but for preview sprites).
+        Preview sprites use the same hash system as regular sprites.
+        
+        Args:
+            user_prompt: User's original creature description
+            stage: Evolution stage (1, 2, or 3)
+            
+        Returns:
+            Prompt hash string (8 hex characters)
+        """
+        return self._get_prompt_hash(user_prompt, stage)
+    
+    def _reuse_preview_sprite(self, user_prompt: str, stage: int) -> Optional[str]:
+        """
+        Check if a preview sprite exists for this prompt+stage.
+        Since we now use prompt hash, preview and game sprites use the same file.
+        
+        Args:
+            user_prompt: User's original creature description
+            stage: Evolution stage (1, 2, or 3)
+            
+        Returns:
+            Sprite URL path if preview sprite exists, None otherwise
+        """
+        prompt_hash = self._get_preview_prompt_hash(user_prompt, stage)
+        sprite_path = self._get_sprite_path(prompt_hash, stage)
+        
+        if sprite_path.exists():
+            print(f"[SpriteGenerator] ✓ Preview sprite exists for prompt hash {prompt_hash} stage {stage}")
+            return self._get_sprite_url(prompt_hash, stage)
+        
+        return None
+    
     async def get_or_generate_sprite(
         self,
         user_prompt: str,
         creature_id: int,
-        stage: int
+        stage: int,
+        force_regenerate: bool = False,
+        reuse_preview: bool = True
     ) -> Optional[str]:
         """
         Get existing sprite or generate new one.
         
         Args:
             user_prompt: User's original creature description
-            creature_id: Unique creature identifier
+            creature_id: Unique creature identifier (kept for logging/backward compatibility, not used for file naming)
             stage: Evolution stage (1, 2, or 3)
+            force_regenerate: If True, regenerate even if sprite exists
+            reuse_preview: If True, try to reuse preview sprite first (default: True)
             
         Returns:
             Sprite URL path or None if generation fails
         """
-        # Check if sprite exists
-        if self._sprite_exists(creature_id, stage):
-            return self._get_sprite_url(creature_id, stage)
+        # Calculate prompt hash for file operations
+        prompt_hash = self._get_prompt_hash(user_prompt, stage)
+        
+        # Check if sprite exists (unless forcing regeneration)
+        if not force_regenerate and self._sprite_exists(prompt_hash, stage):
+            return self._get_sprite_url(prompt_hash, stage)
+        
+        # Try to reuse preview sprite if available (only for stage 1, and if reuse_preview is True)
+        # Since we use prompt hash, preview and game sprites are the same file
+        if reuse_preview and stage == 1:
+            reused_url = self._reuse_preview_sprite(user_prompt, stage)
+            if reused_url:
+                return reused_url
         
         # Generate new sprite
-        return await self.generate_sprite(user_prompt, creature_id, stage)
+        return await self.generate_sprite(user_prompt, creature_id, stage, force_regenerate=force_regenerate)
 

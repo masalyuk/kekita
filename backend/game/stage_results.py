@@ -5,46 +5,29 @@ class StageResults:
     """Calculate and format stage results."""
     
     @staticmethod
-    def calculate(world, player1_id=1, player2_id=2):
+    def calculate(world, player_id=1):
         """
-        Calculate stage results for both players.
+        Calculate stage results for single player.
         
         Args:
             world: World instance
-            player1_id: Player 1 ID (default: 1)
-            player2_id: Player 2 ID (default: 2)
+            player_id: Player ID (default: 1)
             
         Returns:
-            Dict with results for both players
+            Dict with results for the player
         """
-        # Get creatures for each player
-        player1_creatures = [c for c in world.cells if c.alive and c.player_id == player1_id]
-        player2_creatures = [c for c in world.cells if c.alive and c.player_id == player2_id]
+        # Get creatures for the player
+        player_creatures = [c for c in world.cells if c.alive and c.player_id == player_id]
         
-        # Get primary creature for each player (should be only 1, but take first if multiple)
-        player1_creature = player1_creatures[0] if player1_creatures else None
-        player2_creature = player2_creatures[0] if player2_creatures else None
+        # Get primary creature (should be only 1, but take first if multiple)
+        player_creature = player_creatures[0] if player_creatures else None
         
-        # Calculate stats for each player
-        player1_stats = StageResults._calculate_player_stats(player1_creature, player1_id)
-        player2_stats = StageResults._calculate_player_stats(player2_creature, player2_id)
-        
-        # Determine winner (based on energy, then survival)
-        winner = None
-        if player1_creature and player2_creature:
-            if player1_creature.energy > player2_creature.energy:
-                winner = player1_id
-            elif player2_creature.energy > player1_creature.energy:
-                winner = player2_id
-        elif player1_creature and not player2_creature:
-            winner = player1_id
-        elif player2_creature and not player1_creature:
-            winner = player2_id
+        # Calculate stats for the player
+        player_stats = StageResults._calculate_player_stats(player_creature, player_id)
         
         return {
-            'player1': player1_stats,
-            'player2': player2_stats,
-            'winner': winner,
+            'player': player_stats,
+            'survived': player_creature is not None and player_creature.alive,
             'turn': world.turn
         }
     

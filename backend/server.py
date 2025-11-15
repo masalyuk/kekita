@@ -1,4 +1,4 @@
-"""FastAPI server for Evolution Game MVP - Stage-Based Flow."""
+"""FastAPI server for Evolution Game MVP - Single Player, Single Stage."""
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import asyncio
 import uuid
 import os
+from pathlib import Path
 
 from game.llm_manager import LLMManager
 from game.world import World
@@ -42,27 +43,25 @@ os.makedirs(os.path.join(static_dir, "sprites"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Test endpoint to verify static files are accessible
-@app.get("/test_sprite/{creature_id}/{stage}")
-async def test_sprite(creature_id: int, stage: int):
+@app.get("/test_sprite/{prompt_hash}/{stage}")
+async def test_sprite(prompt_hash: str, stage: int):
     """Test endpoint to check if sprite exists."""
-    sprite_path = os.path.join(static_dir, "sprites", f"{creature_id}_{stage}.png")
+    sprite_path = os.path.join(static_dir, "sprites", f"{prompt_hash}_{stage}.png")
     exists = os.path.exists(sprite_path)
     return {
         "sprite_path": sprite_path,
         "exists": exists,
-        "url": f"/static/sprites/{creature_id}_{stage}.png",
-        "full_url": f"http://localhost:8000/static/sprites/{creature_id}_{stage}.png"
+        "url": f"/static/sprites/{prompt_hash}_{stage}.png",
+        "full_url": f"http://localhost:8000/static/sprites/{prompt_hash}_{stage}.png"
     }
 
 
 class GameStartRequest(BaseModel):
-    prompt1: str
-    prompt2: str
+    prompt: str
 
 
 class PromptUpdateRequest(BaseModel):
-    prompt1: str
-    prompt2: str
+    prompt: str
 
 
 class ParsePromptRequest(BaseModel):
@@ -84,6 +83,29 @@ async def shutdown():
     await llm_manager.close()
     await llm_parser.close()
     print("LLM Managers closed")
+
+
+def cleanup_user_sprites():
+    """Remove game sprite files before starting a new game.
+    Since we now use prompt hash, we remove all sprites (they will be regenerated if needed).
+    Preview sprites will be regenerated on demand."""
+    sprite_dir = Path(static_dir) / "sprites"
+    if not sprite_dir.exists():
+        return
+    
+    removed_count = 0
+    for sprite_file in sprite_dir.glob("*.png"):
+        try:
+            # Remove all sprite files (they will be regenerated if needed)
+            # Old format: {creature_id}_{stage}.png
+            # New format: {prompt_hash}_{stage}.png
+            sprite_file.unlink()
+            removed_count += 1
+        except Exception as e:
+            print(f"[cleanup_user_sprites] Failed to remove {sprite_file}: {e}")
+    
+    if removed_count > 0:
+        print(f"[cleanup_user_sprites] Removed {removed_count} sprite file(s)")
 
 
 def apply_trait_evolution(creature, new_traits):
@@ -111,43 +133,51 @@ def apply_trait_evolution(creature, new_traits):
 
 @app.post("/start_game")
 async def start_game(request: GameStartRequest):
-    """Start a new game with 2 player prompts."""
-    traits1 = await PromptParser.parse(request.prompt1, llm_manager=llm_manager)
-    traits2 = await PromptParser.parse(request.prompt2, llm_manager=llm_manager)
+    """Start a new game with single player prompt."""
+    # Clean up user sprites from previous games
+    cleanup_user_sprites()
+    
+    traits = await PromptParser.parse(request.prompt, llm_manager=llm_manager)
 
     world = World(width=20, height=20)
-    world.spawn_resources()
+    world.spawn_resources(num_food=50)  # Increased initial food amount
 
-    # Spawn 1 creature per player (Stage 1)
-    print(f"[start_game] Creating creatures with traits1: {traits1}, traits2: {traits2}")
-    cell1 = Cell(creature_id=1, traits=traits1, x=5, y=5, player_id=1)
-    cell2 = Cell(creature_id=2, traits=traits2, x=15, y=15, player_id=2)
-    print(f"[start_game] Cell1 color: {cell1.color}, Cell2 color: {cell2.color}")
-    
-    # Generate sprites for both creatures (non-blocking, graceful fallback)
-    print(f"[start_game] Generating sprites for creatures...")
+    # Generate sprite once for all creatures from same prompt
+    sprite_url = None
     try:
-        sprite1_url = await sprite_generator.get_or_generate_sprite(request.prompt1, 1, 1)
-        if sprite1_url:
-            cell1.sprite_url = sprite1_url
-            print(f"[start_game] ✓ Sprite 1: {sprite1_url}")
+        sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 1, 1)
+        if sprite_url:
+            print(f"[start_game] ✓ Sprite generated for prompt: {sprite_url}")
         else:
-            print(f"[start_game] ⚠ Sprite 1 generation failed, will use canvas drawing")
+            print(f"[start_game] ⚠ Sprite generation failed, creatures will use canvas drawing")
     except Exception as e:
-        print(f"[start_game] ✗ Error generating sprite 1: {e}, will use canvas drawing")
+        print(f"[start_game] ✗ Error generating sprite: {e}, creatures will use canvas drawing")
     
-    try:
-        sprite2_url = await sprite_generator.get_or_generate_sprite(request.prompt2, 2, 1)
-        if sprite2_url:
-            cell2.sprite_url = sprite2_url
-            print(f"[start_game] ✓ Sprite 2: {sprite2_url}")
-        else:
-            print(f"[start_game] ⚠ Sprite 2 generation failed, will use canvas drawing")
-    except Exception as e:
-        print(f"[start_game] ✗ Error generating sprite 2: {e}, will use canvas drawing")
-    
-    world.add_cell(cell1)
-    world.add_cell(cell2)
+    # Spawn {num_creatures} creatures (Stage 1) at random positions
+    import random
+    num_creatures = 2
+    print(f"[start_game] Creating {num_creatures} creatures with traits: {traits}")
+    creature_id = 1
+    for _ in range(num_creatures):
+        # Find a random position that's not occupied
+        x = random.randint(0, world.width - 1)
+        y = random.randint(0, world.height - 1)
+        # Avoid spawning on existing cells or food
+        while (any(c.x == x and c.y == y for c in world.cells) or
+               any(f['x'] == x and f['y'] == y for f in world.food)):
+            x = random.randint(0, world.width - 1)
+            y = random.randint(0, world.height - 1)
+        
+        cell = Cell(creature_id=creature_id, traits=traits, x=x, y=y, player_id=1)
+        print(f"[start_game] Creature {creature_id} at ({x}, {y}), color: {cell.color}, poison_food_type: {cell.poison_food_type}")
+        
+        # Assign same sprite URL to all creatures from same prompt
+        if sprite_url:
+            cell.sprite_url = sprite_url
+            print(f"[start_game] ✓ Assigned sprite to creature {creature_id}: {sprite_url}")
+        
+        world.add_cell(cell)
+        creature_id += 1
 
     simulation = Simulation(world, llm_manager)
     decision_maker = HybridDecisionMaker(llm_manager, timeout=10.0)
@@ -160,15 +190,17 @@ async def start_game(request: GameStartRequest):
         'decision_maker': decision_maker,
         'stage_controller': stage_controller,
         'current_stage': 1,
-        'original_prompts': {'prompt1': request.prompt1, 'prompt2': request.prompt2},
-        'current_traits': {'traits1': traits1, 'traits2': traits2},
-        'waiting_for_prompts': False
+        'prompt_history': [request.prompt],
+        'current_traits': traits,
+        'waiting_for_prompts': False,
+        'attempt_number': 1,
+        'max_attempts': 3,
+        'waiting_for_prompt': False
     }
 
     return {
         'game_id': game_id,
-        'traits1': traits1,
-        'traits2': traits2,
+        'traits': traits,
         'stage': 1
     }
 
@@ -222,10 +254,12 @@ async def parse_prompt(request: ParsePromptRequest):
         
         debug_info['validated_traits'] = traits
         
-        # Generate preview sprite (using temporary ID 0 for preview)
+        # Generate preview sprite using prompt hash
+        # Preview sprites now use the same hash system as game sprites
         sprite_url = None
         try:
-            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1)
+            # Use prompt hash system (creature_id is not used for file naming anymore)
+            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1, force_regenerate=False)
             if sprite_url:
                 print(f"[parse_prompt] ✓ Preview sprite generated: {sprite_url}")
         except Exception as e:
@@ -276,141 +310,194 @@ async def parse_prompt(request: ParsePromptRequest):
         }
 
 
+async def _process_evolution_background(game, world, request, current_stage):
+    """Background task to process evolution (trait merging, application, sprite regeneration) without blocking."""
+    try:
+        # Use LLM-based merging to intelligently merge current traits with evolution descriptions
+        print(f"[update_prompts] [Background] Merging traits with evolution: '{request.prompt[:50]}...'")
+        print(f"[update_prompts] [Background] Current traits: {game['current_traits']}")
+        merged_traits = await PromptParser.merge_traits(
+            current_traits=game['current_traits'],
+            evolution_description=request.prompt,
+            llm_manager=llm_manager
+        )
+        print(f"[update_prompts] [Background] Merged traits: {merged_traits}")
+        
+        # Append new evolution description to prompt history
+        game['prompt_history'].append(request.prompt)
+        
+        # Apply to creature
+        for creature in world.cells:
+            if creature.alive:
+                apply_trait_evolution(creature, merged_traits)
+                print(f"[update_prompts] [Background] Applied merged traits to creature {creature.id}, color: {creature.color}")
+                break
+        
+        # Update game state
+        game['current_traits'] = merged_traits
+        
+        # Regenerate sprite for all evolved creatures (same prompt = same sprite)
+        evolution_prompt = ", ".join(game['prompt_history'])
+        sprite_url = None
+        try:
+            # Generate sprite once for all creatures with same evolution prompt
+            sprite_url = await sprite_generator.generate_sprite(evolution_prompt, 0, current_stage, force_regenerate=True)
+            if sprite_url:
+                print(f"[update_prompts] [Background] ✓ Regenerated sprite for evolution: {sprite_url}")
+                # Assign same sprite URL to all alive creatures
+                for creature in world.cells:
+                    if creature.alive:
+                        creature.sprite_url = sprite_url
+                        print(f"[update_prompts] [Background] ✓ Assigned sprite to creature {creature.id}")
+            else:
+                print(f"[update_prompts] [Background] ⚠ Sprite regeneration failed, keeping existing or using canvas")
+        except Exception as e:
+            print(f"[update_prompts] [Background] ✗ Error regenerating sprite: {e}, keeping existing or using canvas")
+    except Exception as e:
+        print(f"[update_prompts] [Background] ✗ Error in background evolution processing: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+async def _restart_attempt(game, world, request, current_stage):
+    """Restart attempt after population death: reset creatures, apply new traits, keep world state."""
+    try:
+        print(f"[restart_attempt] Restarting attempt {game['attempt_number'] + 1}")
+        
+        # Reset energy events tracker for new attempt
+        if hasattr(world, 'reset_energy_events'):
+            world.reset_energy_events()
+        
+        # Merge traits with new prompt
+        merged_traits = await PromptParser.merge_traits(
+            current_traits=game['current_traits'],
+            evolution_description=request.prompt,
+            llm_manager=llm_manager
+        )
+        print(f"[restart_attempt] Merged traits: {merged_traits}")
+        
+        # Append new prompt to history
+        game['prompt_history'].append(request.prompt)
+        game['current_traits'] = merged_traits
+        
+        # Reset all creatures to alive state and apply new traits
+        import random
+        for creature in world.cells:
+            # Reset creature to alive
+            creature.alive = True
+            creature.energy = 50  # Reset energy to starting value
+            
+            # Apply updated traits
+            apply_trait_evolution(creature, merged_traits)
+            
+            # Reset age (optional - could keep age for continuity)
+            # creature.age = 0
+        
+        # Regenerate sprite with updated prompt
+        evolution_prompt = ", ".join(game['prompt_history'])
+        sprite_url = None
+        try:
+            sprite_url = await sprite_generator.generate_sprite(
+                evolution_prompt, 0, current_stage, force_regenerate=True
+            )
+            if sprite_url:
+                print(f"[restart_attempt] ✓ Regenerated sprite: {sprite_url}")
+                # Assign sprite to all creatures
+                for creature in world.cells:
+                    creature.sprite_url = sprite_url
+        except Exception as e:
+            print(f"[restart_attempt] ✗ Error regenerating sprite: {e}")
+        
+        # Increment attempt number (before clearing flag so WebSocket loop can check)
+        game['attempt_number'] += 1
+        
+        print(f"[restart_attempt] ✓ Attempt restarted. New attempt number: {game['attempt_number']}")
+        
+        # Clear waiting flag to resume simulation
+        game['waiting_for_prompt'] = False
+        
+    except Exception as e:
+        print(f"[restart_attempt] ✗ Error restarting attempt: {e}")
+        import traceback
+        traceback.print_exc()
+        game['waiting_for_prompt'] = False  # Clear flag even on error
+
+
 @app.post("/update_prompts/{game_id}")
 async def update_prompts(game_id: str, request: PromptUpdateRequest):
-    """Update prompts for next stage (evolution descriptions)."""
+    """Update prompt (evolution description). Restarts attempt if population died."""
     game = game_state.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    if not game['waiting_for_prompts']:
-        raise HTTPException(status_code=400, detail="Not waiting for prompt updates")
-    
-    # Use LLM-based merging to intelligently merge current traits with evolution descriptions
-    # This preserves existing traits (like color) unless explicitly changed in the evolution description
-    print(f"[update_prompts] Merging traits for Player 1 with evolution: '{request.prompt1[:50]}...'")
-    print(f"[update_prompts] Current traits1: {game['current_traits']['traits1']}")
-    merged_traits1 = await PromptParser.merge_traits(
-        current_traits=game['current_traits']['traits1'],
-        evolution_description=request.prompt1,
-        llm_manager=llm_manager
-    )
-    print(f"[update_prompts] Merged traits1: {merged_traits1}")
-    
-    print(f"[update_prompts] Merging traits for Player 2 with evolution: '{request.prompt2[:50]}...'")
-    print(f"[update_prompts] Current traits2: {game['current_traits']['traits2']}")
-    merged_traits2 = await PromptParser.merge_traits(
-        current_traits=game['current_traits']['traits2'],
-        evolution_description=request.prompt2,
-        llm_manager=llm_manager
-    )
-    print(f"[update_prompts] Merged traits2: {merged_traits2}")
-    
-    # Apply to creatures
+    # Get world and stage info
     world = game['simulation'].world
     current_stage = game.get('current_stage', 1)
     
-    # Regenerate sprites for evolved creatures
-    # Combine original prompt with evolution description for better sprite generation
-    for creature in world.cells:
-        if creature.player_id == 1:
-            apply_trait_evolution(creature, merged_traits1)
-            print(f"[update_prompts] Applied merged traits1 to creature {creature.id}, color: {creature.color}")
-            # Regenerate sprite with evolution description
-            try:
-                evolution_prompt = f"{game['original_prompts']['prompt1']}, evolved: {request.prompt1}"
-                sprite_url = await sprite_generator.generate_sprite(evolution_prompt, creature.id, current_stage, force_regenerate=True)
-                if sprite_url:
-                    creature.sprite_url = sprite_url
-                    print(f"[update_prompts] ✓ Regenerated sprite for creature {creature.id}: {sprite_url}")
-                else:
-                    print(f"[update_prompts] ⚠ Sprite regeneration failed for creature {creature.id}, keeping existing or using canvas")
-            except Exception as e:
-                print(f"[update_prompts] ✗ Error regenerating sprite for creature {creature.id}: {e}, keeping existing or using canvas")
-        elif creature.player_id == 2:
-            apply_trait_evolution(creature, merged_traits2)
-            print(f"[update_prompts] Applied merged traits2 to creature {creature.id}, color: {creature.color}")
-            # Regenerate sprite with evolution description
-            try:
-                evolution_prompt = f"{game['original_prompts']['prompt2']}, evolved: {request.prompt2}"
-                sprite_url = await sprite_generator.generate_sprite(evolution_prompt, creature.id, current_stage, force_regenerate=True)
-                if sprite_url:
-                    creature.sprite_url = sprite_url
-                    print(f"[update_prompts] ✓ Regenerated sprite for creature {creature.id}: {sprite_url}")
-                else:
-                    print(f"[update_prompts] ⚠ Sprite regeneration failed for creature {creature.id}, keeping existing or using canvas")
-            except Exception as e:
-                print(f"[update_prompts] ✗ Error regenerating sprite for creature {creature.id}: {e}, keeping existing or using canvas")
-    
-    # Update game state
-    game['current_traits'] = {'traits1': merged_traits1, 'traits2': merged_traits2}
-    game['waiting_for_prompts'] = False
-    
-    return {
-        'status': 'updated',
-        'traits1': merged_traits1,
-        'traits2': merged_traits2
-    }
+    # Check if we're restarting an attempt after population death
+    if game.get('waiting_for_prompt', False):
+        # Restart attempt with new traits
+        print(f"[update_prompts] Restarting attempt after population death")
+        await _restart_attempt(game, world, request, current_stage)
+        return {
+            'status': 'attempt_restarted',
+            'attempt_number': game['attempt_number'],
+            'max_attempts': game['max_attempts'],
+            'traits': game['current_traits']
+        }
+    else:
+        # Normal evolution update (during gameplay)
+        print(f"[update_prompts] Normal evolution update")
+        asyncio.create_task(_process_evolution_background(game, world, request, current_stage))
+        return {
+            'status': 'updated',
+            'traits': game['current_traits']
+        }
 
 
-async def run_stage(game, websocket):
-    """Run a single stage until time expires."""
-    stage_controller = game['stage_controller']
-    simulation = game['simulation']
-    decision_maker = game['decision_maker']
+async def regenerate_sprites_for_evolved_creatures(game, evolved_creatures, new_stage):
+    """
+    Regenerate sprites for creatures that just evolved.
     
-    # Reset world for new stage
-    world = simulation.world
-    world.turn = 0
-    world.spawn_resources()
+    Args:
+        game: Game state dict
+        evolved_creatures: List of newly evolved creatures
+        new_stage: The new stage number (2 or 3)
+    """
+    if not evolved_creatures:
+        return
     
-    # Send stage start message
-    await websocket.send_json({
-        'status': 'stage_started',
-        'stage': stage_controller.current_stage,
-        'time_remaining': stage_controller.stage_duration
-    })
+    world = game['simulation'].world
+    prompt_history = game['prompt_history']
     
-    # Run simulation until stage ends
-    last_time_update = 0
-    while not stage_controller.is_stage_ended():
-        # Execute one simulation step
-        step_result = await simulation.step(decision_maker)
-        
-        # Send update every simulation step (so frontend sees movement)
-        stage_info = stage_controller.get_stage_info()
-        current_time = int(stage_info['time_remaining'])
-        
-        await websocket.send_json({
-            'status': 'update',
-            'turn': step_result['turn'],
-            'stage': stage_info['stage'],
-            'time_remaining': stage_info['time_remaining'],
-            'world': {
-                'creatures': step_result['creatures'],
-                'resources': step_result['resources']
-            },
-            'events': step_result['events'][-5:]  # Last 5 events
-        })
-        
-        # Small delay between turns
-        await asyncio.sleep(0.5)
+    # Combine all prompts from history for full context
+    evolution_prompt = ", ".join(prompt_history)
     
-    # Stage ended - calculate results
-    results = StageResults.calculate(world, player1_id=1, player2_id=2)
-    
-    await websocket.send_json({
-        'status': 'stage_ended',
-        'stage': stage_controller.current_stage,
-        'results': results
-    })
-    
-    return results
+    # Generate sprite once for all evolved creatures with same prompt+stage
+    sprite_url = None
+    try:
+        print(f"[regenerate_sprites] Regenerating sprite for evolution to stage {new_stage}")
+        sprite_url = await sprite_generator.generate_sprite(
+            evolution_prompt, 
+            0,  # creature_id not used for file naming
+            new_stage, 
+            force_regenerate=True
+        )
+        if sprite_url:
+            print(f"[regenerate_sprites] ✓ Regenerated sprite: {sprite_url}")
+            # Assign same sprite URL to all evolved creatures
+            for creature in evolved_creatures:
+                creature.sprite_url = sprite_url
+                print(f"[regenerate_sprites] ✓ Assigned sprite to creature {creature.id}")
+        else:
+            print(f"[regenerate_sprites] ⚠ Sprite regeneration failed, keeping existing or using canvas")
+    except Exception as e:
+        print(f"[regenerate_sprites] ✗ Error regenerating sprite: {e}, keeping existing or using canvas")
 
 
 @app.websocket("/ws/{game_id}")
 async def websocket_endpoint(websocket: WebSocket, game_id: str):
-    """WebSocket for real-time game updates with stage-based flow."""
+    """WebSocket for real-time game updates with single continuous simulation."""
     await websocket.accept()
 
     game = game_state.get(game_id)
@@ -420,69 +507,103 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
 
     try:
         stage_controller = game['stage_controller']
+        simulation = game['simulation']
+        decision_maker = game['decision_maker']
         
-        # Run Stage 1
-        await run_stage(game, websocket)
-        game['waiting_for_prompts'] = True
-        
-        # Wait for prompt updates
+        # Send game start message
         await websocket.send_json({
-            'status': 'prompt_update_needed',
-            'current_traits': game['current_traits']
+            'status': 'game_started',
+            'stage': 1,
+            'attempt_number': game['attempt_number'],
+            'max_attempts': game['max_attempts'],
+            'attempts_remaining': game['max_attempts'] - game['attempt_number'] + 1
         })
         
-        # Wait for prompt update (frontend calls /update_prompts endpoint)
-        # Poll for update completion (max 30 seconds wait)
-        for _ in range(60):  # 60 * 0.5s = 30 seconds max wait
-            await asyncio.sleep(0.5)
-            if not game['waiting_for_prompts']:
-                break
-        
-        # If still waiting, use current traits (no evolution)
-        if game['waiting_for_prompts']:
-            game['waiting_for_prompts'] = False
-        
-        # Advance to Stage 2
-        if stage_controller.can_advance_to_next_stage():
-            stage_controller.start_stage(2)
-            game['current_stage'] = 2
+        # Run continuous simulation until population dies or game ends
+        while True:
+            # Check if waiting for prompt update
+            if game.get('waiting_for_prompt', False):
+                # Wait for prompt update (will be handled by restart_attempt endpoint)
+                await asyncio.sleep(0.1)
+                continue
             
-            # Evolve creatures if criteria met
-            StageManager.check_and_evolve_all(game['simulation'].world)
+            # Execute one simulation step
+            step_result = await simulation.step(decision_maker)
             
-            await run_stage(game, websocket)
-            game['waiting_for_prompts'] = True
+            # Regenerate sprites for any creatures that evolved during this step
+            evolved_creatures = step_result.get('evolved_creatures', [])
+            if evolved_creatures:
+                current_stage = stage_controller.current_stage
+                await regenerate_sprites_for_evolved_creatures(game, evolved_creatures, current_stage)
             
-            await websocket.send_json({
-                'status': 'prompt_update_needed',
-                'current_traits': game['current_traits']
-            })
-            
-            # Wait for prompt update
-            for _ in range(60):
-                await asyncio.sleep(0.5)
-                if not game['waiting_for_prompts']:
+            # Check if population is extinct
+            if simulation.is_population_extinct():
+                # Print current prompt for reference
+                current_prompt = ", ".join(game['prompt_history']) if game.get('prompt_history') else "N/A"
+                print(f"\n{'='*60}")
+                print(f"[POPULATION EXTINCT] Current user prompt:")
+                print(f"{current_prompt}")
+                print(f"{'='*60}\n")
+                
+                # Population died - check if attempts remain
+                if game['attempt_number'] < game['max_attempts']:
+                    # More attempts available - pause and wait for prompt
+                    game['waiting_for_prompt'] = True
+                    # Get energy events from world
+                    energy_events = []
+                    if hasattr(simulation.world, 'get_energy_events_list'):
+                        energy_events = simulation.world.get_energy_events_list()
+                    await websocket.send_json({
+                        'status': 'population_died',
+                        'attempt_number': game['attempt_number'],
+                        'max_attempts': game['max_attempts'],
+                        'attempts_remaining': game['max_attempts'] - game['attempt_number'],
+                        'turn': step_result['turn'],
+                        'current_prompt': current_prompt,
+                        'energy_events': energy_events
+                    })
+                    # Wait for prompt update (will restart attempt)
+                    while game.get('waiting_for_prompt', False):
+                        await asyncio.sleep(0.1)
+                    # Continue to next iteration (attempt will be restarted)
+                    continue
+                else:
+                    # No attempts remaining - game over
+                    final_results = StageResults.calculate(game['simulation'].world, player_id=1)
+                    # Get energy events from world
+                    energy_events = []
+                    if hasattr(simulation.world, 'get_energy_events_list'):
+                        energy_events = simulation.world.get_energy_events_list()
+                    await websocket.send_json({
+                        'status': 'game_complete',
+                        'final_results': final_results,
+                        'attempt_number': game['attempt_number'],
+                        'max_attempts': game['max_attempts'],
+                        'current_prompt': current_prompt,
+                        'energy_events': energy_events
+                    })
                     break
             
-            if game['waiting_for_prompts']:
-                game['waiting_for_prompts'] = False
-        
-        # Advance to Stage 3
-        if stage_controller.can_advance_to_next_stage():
-            stage_controller.start_stage(3)
-            game['current_stage'] = 3
+            # Send update every simulation step (so frontend sees movement)
+            stage_info = stage_controller.get_stage_info()
             
-            # Evolve creatures if criteria met
-            StageManager.check_and_evolve_all(game['simulation'].world)
+            await websocket.send_json({
+                'status': 'update',
+                'turn': step_result['turn'],
+                'stage': stage_info['stage'],
+                'time_remaining': stage_info['time_remaining'],
+                'attempt_number': game['attempt_number'],
+                'max_attempts': game['max_attempts'],
+                'attempts_remaining': game['max_attempts'] - game['attempt_number'] + 1,
+                'world': {
+                    'creatures': step_result['creatures'],
+                    'resources': step_result['resources']
+                },
+                'events': step_result['events'][-5:]  # Last 5 events
+            })
             
-            await run_stage(game, websocket)
-        
-        # Game complete
-        final_results = StageResults.calculate(game['simulation'].world, player1_id=1, player2_id=2)
-        await websocket.send_json({
-            'status': 'game_complete',
-            'final_results': final_results
-        })
+            # Small delay between turns
+            await asyncio.sleep(0.5)
 
     except WebSocketDisconnect:
         print(f"WebSocket disconnected for game {game_id}")

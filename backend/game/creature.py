@@ -1,11 +1,14 @@
 """Base Creature class for all evolution stages."""
 
+import random
 from abc import ABC, abstractmethod
-from .creature_memory import CreatureMemory
 
 
 class Creature(ABC):
     """Base class for all creatures across evolution stages."""
+    
+    # Food types available in the world
+    FOOD_TYPES = ['apple', 'banana', 'grapes']
     
     def __init__(self, creature_id, traits, x, y, stage=1, player_id=None):
         """
@@ -31,9 +34,10 @@ class Creature(ABC):
         self.energy = 100
         self.age = 0
         self.alive = True
-        self.memory = CreatureMemory(max_events=10)
         self.stage = stage
         self.traits = traits  # Store original traits
+        # Randomly assign a poison food type for this creature
+        self.poison_food_type = random.choice(self.FOOD_TYPES)
     
     @abstractmethod
     def to_dict(self):

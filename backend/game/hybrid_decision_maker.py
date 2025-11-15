@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+import time
 
 
 class HybridDecisionMaker:
@@ -24,44 +25,52 @@ class HybridDecisionMaker:
         
         Args:
             cell: Cell object
-            world_state: Dict with 'nearby' containing food, poison, enemy lists
+            world_state: Dict with 'nearby' containing food, enemy lists
             
         Returns:
             Action dict {'action': ..., 'direction': ...}
         """
+        start_time = time.perf_counter()
+        decision_type = None
+        
         # LAYER 1: Critical situation → use rule-based immediately
         if self.is_critical_situation(cell, world_state):
             action = self.rule_based_decision(cell, world_state)
+            decision_type = "rule-based (critical)"
             print(f"[DEBUG] Creature {cell.id}: Critical situation detected, using rule-based: {action}")
-            return action
-
-        # LAYER 2: Normal situation → try LLM with timeout
-        try:
-            action = await asyncio.wait_for(
-                self._call_llm(cell, world_state),
-                timeout=self.timeout
-            )
-            print(f"[DEBUG] Creature {cell.id}: LLM decision: {action}")
-            return action
-        except asyncio.TimeoutError:
-            # LAYER 3: LLM timeout → fallback to rule-based
-            action = self.rule_based_decision(cell, world_state)
-            print(f"[DEBUG] Creature {cell.id}: LLM timeout, using rule-based: {action}")
-            return action
-        except Exception as e:
-            # LAYER 3: LLM error → fallback
-            print(f"[DEBUG] Creature {cell.id}: LLM error: {e}, using rule-based")
-            action = self.rule_based_decision(cell, world_state)
-            print(f"[DEBUG] Creature {cell.id}: Rule-based fallback: {action}")
-            return action
+        else:
+            # LAYER 2: Normal situation → try LLM with timeout
+            try:
+                action = await asyncio.wait_for(
+                    self._call_llm(cell, world_state),
+                    timeout=self.timeout
+                )
+                decision_type = "LLM"
+                print(f"[DEBUG] Creature {cell.id}: LLM decision: {action}")
+            except asyncio.TimeoutError:
+                # LAYER 3: LLM timeout → fallback to rule-based
+                action = self.rule_based_decision(cell, world_state)
+                decision_type = "rule-based (timeout)"
+                print(f"[WARNING] Creature {cell.id}: LLM timeout, using rule-based: {action}")
+            except Exception as e:
+                # LAYER 3: LLM error → fallback
+                action = self.rule_based_decision(cell, world_state)
+                decision_type = "rule-based (error)"
+                print(f"[DEBUG] Creature {cell.id}: LLM error: {e}, using rule-based")
+                print(f"[DEBUG] Creature {cell.id}: Rule-based fallback: {action}")
+        
+        elapsed_time = time.perf_counter() - start_time
+        print(f"[DEBUG] Creature {cell.id}: Decision time: {elapsed_time*1000:.2f}ms ({decision_type})")
+        
+        return action
 
     async def _call_llm(self, cell, world_state: dict) -> dict:
-        """Call LLM for decision."""
+        """Call LLM for decision using chat API."""
         from .llm_prompt_builder import LLMPromptBuilder
         from .llm_response_parser import LLMResponseParser
 
         prompt = LLMPromptBuilder.build_prompt(cell, world_state)
-        response = await self.llm_manager.generate(prompt)
+        response = await self.llm_manager.chat(prompt)
         action = LLMResponseParser.parse(response)
         return action
 
@@ -79,11 +88,6 @@ class HybridDecisionMaker:
         # Low energy
         if cell.energy < 20:
             return True
-
-        # Poison very close
-        if world_state['nearby']['poison']:
-            if world_state['nearby']['poison'][0]['dist'] < 1:
-                return True
 
         # Enemy attacking
         if world_state['nearby']['enemy']:
@@ -119,37 +123,50 @@ class HybridDecisionMaker:
             print(f"[DEBUG] Rule 2: Low energy ({energy}), moving toward food: {direction}")
             return action
 
-        # Rule 3: Poison close → flee
-        if nearby['poison'] and nearby['poison'][0]['dist'] < 2:
-            direction = self._direction_from(cell, nearby['poison'][0])
-            action = {'action': 'flee', 'direction': direction}
-            print(f"[DEBUG] Rule 3: Poison nearby, fleeing: {direction}")
-            return action
-
-        # Rule 4: Enemy close and weak → flee
+        # Rule 3: Enemy close and weak → flee
         if nearby['enemy'] and nearby['enemy'][0]['dist'] < 2 and energy < 50:
             direction = self._direction_from(cell, nearby['enemy'][0])
             action = {'action': 'flee', 'direction': direction}
-            print(f"[DEBUG] Rule 4: Enemy nearby and weak, fleeing: {direction}")
+            print(f"[DEBUG] Rule 3: Enemy nearby and weak, fleeing: {direction}")
             return action
 
-        # Rule 5: High energy → reproduce
-        if energy > 80:
-            action = {'action': 'reproduce'}
-            print(f"[DEBUG] Rule 5: High energy ({energy}), reproducing")
-            return action
+        # Rule 4: High energy → reproduce (only if partner nearby)
+        if energy >= 88:
+            # Check if there's a potential partner nearby (within 1 cell)
+            potential_partner = None
+            for enemy in nearby['enemy']:
+                if enemy['dist'] <= 1:
+                    potential_partner = enemy
+                    break
+            
+            if potential_partner:
+                action = {'action': 'reproduce'}
+                print(f"[DEBUG] Rule 4: High energy ({energy}), partner nearby, attempting reproduction")
+                return action
+            else:
+                # No partner nearby, move toward nearest creature to find a mate
+                if nearby['enemy']:
+                    direction = self._direction_to(cell, nearby['enemy'][0])
+                    action = {'action': 'move', 'direction': direction}
+                    print(f"[DEBUG] Rule 4: High energy ({energy}), no partner nearby, moving toward nearest creature: {direction}")
+                    return action
+                else:
+                    # No other creatures visible, just try to reproduce anyway (might find one)
+                    action = {'action': 'reproduce'}
+                    print(f"[DEBUG] Rule 4: High energy ({energy}), no creatures visible, attempting reproduction")
+                    return action
 
-        # Rule 6: Food available → move toward it
+        # Rule 5: Food available → move toward it
         if nearby['food']:
             direction = self._direction_to(cell, nearby['food'][0])
             action = {'action': 'move', 'direction': direction}
-            print(f"[DEBUG] Rule 6: Food available, moving toward it: {direction}")
+            print(f"[DEBUG] Rule 5: Food available, moving toward it: {direction}")
             return action
 
-        # Rule 7: Nothing special → random move
+        # Rule 6: Nothing special → random move
         direction = random.choice([(0, -1), (0, 1), (-1, 0), (1, 0)])
         action = {'action': 'move', 'direction': direction}
-        print(f"[DEBUG] Rule 7: No special situation, random move: {direction}")
+        print(f"[DEBUG] Rule 6: No special situation, random move: {direction}")
         return action
 
     def _direction_to(self, cell, target: dict) -> tuple:

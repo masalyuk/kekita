@@ -52,21 +52,21 @@ class StageController:
         Check if current stage has ended.
         
         Returns:
-            True if stage time has elapsed
+            False (no time limits - game ends only when population dies)
         """
-        return self.get_time_remaining() <= 0
+        return False  # No time limits - game continues until population dies
     
     def get_stage_info(self):
         """
         Get current stage information.
         
         Returns:
-            Dict with stage number and time remaining
+            Dict with stage number (no time limits)
         """
         return {
             'stage': self.current_stage,
-            'time_remaining': int(self.get_time_remaining()),
-            'stage_ended': self.is_stage_ended()
+            'time_remaining': None,  # No time limits
+            'stage_ended': False  # Never ends due to time
         }
     
     def can_advance_to_next_stage(self):

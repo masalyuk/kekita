@@ -11,7 +11,7 @@ class LLMPromptBuilder:
         
         Args:
             cell: Cell object
-            world_state: Dict with 'nearby' containing food, poison, enemy lists
+            world_state: Dict with 'nearby' containing food, enemy lists
             
         Returns:
             Compact text prompt
@@ -32,30 +32,53 @@ class LLMPromptBuilder:
         
         prompt = f"E:{energy} @({cell.x},{cell.y}) {stage_info}\n"
 
-        # Add memory if available
-        if hasattr(cell, 'memory') and cell.memory.events:
-            memory_str = cell.memory.to_compact_string(n=3)  # Last 3 events
-            if memory_str:
-                prompt += f"{memory_str}\n"
-
         # Add nearest significant objects
         if nearby['food']:
             food = nearby['food'][0]
             direction = LLMPromptBuilder.get_direction_symbol(cell, food)
             prompt += f"FOOD {direction} d{int(food['dist'])} "
 
-        if nearby['poison']:
-            poison = nearby['poison'][0]
-            if poison['dist'] < 3:  # Only mention if close
-                direction = LLMPromptBuilder.get_direction_symbol(cell, poison)
-                prompt += f"POISON {direction} d{int(poison['dist'])} "
-
         if nearby['enemy']:
             enemy = nearby['enemy'][0]
             direction = LLMPromptBuilder.get_direction_symbol(cell, enemy)
             prompt += f"ENEMY {direction} d{int(enemy['dist'])} "
 
-        prompt += "\nAction? (MOVE, EAT, FLEE, REPRODUCE)"
+        # Build available actions based on nearby zone and conditions
+        available_actions = ["MOVE"]  # MOVE is always available
+        
+        # EAT: only if food is nearby (within eating range ~1.5 cells)
+        food_nearby = nearby['food'] and nearby['food'][0]['dist'] < 1.5
+        if food_nearby:
+            available_actions.append("EAT")
+        
+        # FLEE: always available if there are enemies
+        if nearby['enemy']:
+            available_actions.append("FLEE")
+        
+        # REPRODUCE: only if partner nearby (within 1 cell) AND energy >= 88
+        can_reproduce = False
+        if energy >= 88:
+            # Check if there's a partner nearby (same position or adjacent)
+            for enemy in nearby['enemy']:
+                if enemy['dist'] <= 1:
+                    can_reproduce = True
+                    break
+        
+        if can_reproduce:
+            available_actions.append("REPRODUCE")
+        
+        # Build action list string
+        actions_str = ", ".join(available_actions)
+        prompt += f"\nAction? ({actions_str})"
+        
+        # Debug logging
+        print(f"[DEBUG] LLM Prompt for Creature {cell.id}: Available actions: {actions_str}")
+        if not food_nearby and nearby['food']:
+            print(f"[DEBUG] Food exists but too far (d={nearby['food'][0]['dist']:.2f} > 1.5), EAT not suggested")
+        if energy < 88:
+            print(f"[DEBUG] Energy {energy} < 88, REPRODUCE not suggested")
+        elif not can_reproduce and nearby['enemy']:
+            print(f"[DEBUG] Partner too far (nearest at d={nearby['enemy'][0]['dist']:.2f} > 1), REPRODUCE not suggested")
 
         return prompt
 

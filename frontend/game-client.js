@@ -12,16 +12,22 @@ class GameClient {
         this.animationFrame = null;
         this.currentStage = 1;
         this.timeRemaining = 60;
-        this.previewTimeouts = {}; // Store debounce timeouts for each player
+        this.previewTimeouts = {}; // Store debounce timeouts
+        this.confirmedPlayer = false; // Track confirmation state for initial game start
+        this.attemptNumber = 1;
+        this.maxAttempts = 3;
     }
 
-    async startGame(prompt1, prompt2) {
+    async startGame(prompt) {
         try {
+            // Reset confirmation state for new game
+            this.confirmedPlayer = false;
+            
             // Request backend to start game
             const response = await fetch('http://localhost:8000/start_game', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt1, prompt2 })
+                body: JSON.stringify({ prompt })
             });
 
             if (!response.ok) {
@@ -30,6 +36,11 @@ class GameClient {
 
             const data = await response.json();
             this.gameId = data.game_id;
+            
+            // Initialize attempt tracking
+            this.attemptNumber = 1;
+            this.maxAttempts = 3;
+            this.updateHearts(3);
 
             // Update status
             this.updateStatus('Game started! Connecting...');
@@ -59,24 +70,69 @@ class GameClient {
         }
     }
 
-    async updatePrompts(prompt1, prompt2) {
-        if (!this.gameId) return;
+    async updatePrompts(prompt) {
+        console.log('[updatePrompts] ===== Starting updatePrompts =====');
+        console.log('[updatePrompts] gameId:', this.gameId);
+        console.log('[updatePrompts] prompt:', prompt);
+        console.log('[updatePrompts] WebSocket state:', this.ws ? {
+            readyState: this.ws.readyState,
+            url: this.ws.url,
+            protocol: this.ws.protocol
+        } : 'WebSocket is null');
+        
+        if (!this.gameId) {
+            console.error('[updatePrompts] ✗ No gameId, returning early');
+            return;
+        }
+        
+        console.log('[updatePrompts] ✓ All checks passed, making API request');
+        const url = `http://localhost:8000/update_prompts/${this.gameId}`;
+        const payload = { prompt };
+        console.log('[updatePrompts] Request URL:', url);
+        console.log('[updatePrompts] Request payload:', payload);
         
         try {
-            const response = await fetch(`http://localhost:8000/update_prompts/${this.gameId}`, {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt1, prompt2 })
+                body: JSON.stringify(payload)
+            });
+
+            console.log('[updatePrompts] Response received:', {
+                status: response.status,
+                statusText: response.statusText,
+                ok: response.ok,
+                headers: Object.fromEntries(response.headers.entries())
             });
 
             if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[updatePrompts] ✗ HTTP error response:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    body: errorText
+                });
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            // Hide prompt update modal
-            document.getElementById('promptUpdateModal').style.display = 'none';
+            const responseData = await response.json();
+            console.log('[updatePrompts] ✓ Response data:', responseData);
+
+            // Hide modal
+            const resultsModal = document.getElementById('resultsModal');
+            if (resultsModal) {
+                resultsModal.style.display = 'none';
+                console.log('[updatePrompts] ✓ Hidden resultsModal');
+            }
+            
+            console.log('[updatePrompts] ===== updatePrompts completed successfully =====');
         } catch (error) {
-            console.error('Error updating prompts:', error);
+            console.error('[updatePrompts] ✗ Error updating prompts:', error);
+            console.error('[updatePrompts] Error details:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            });
             alert(`Error updating prompts: ${error.message}`);
         }
     }
@@ -92,15 +148,39 @@ class GameClient {
             this.gameState = update;
             this.currentStage = update.stage || this.currentStage;
             this.timeRemaining = update.time_remaining || this.timeRemaining;
+            if (update.attempt_number) {
+                this.attemptNumber = update.attempt_number;
+            }
+            if (update.max_attempts) {
+                this.maxAttempts = update.max_attempts;
+            }
+            this.updateHearts(update.attempts_remaining || (this.maxAttempts - this.attemptNumber + 1));
             this.render();
             this.updateEvents(update.events || []);
             this.updateStageTimer(update.time_remaining);
-        } else if (update.status === 'stage_ended') {
-            this.showResults(update.results, update.stage);
-        } else if (update.status === 'prompt_update_needed') {
-            this.showPromptUpdateForm(update.current_traits);
+        } else if (update.status === 'game_started') {
+            this.currentStage = update.stage;
+            this.timeRemaining = update.time_remaining;
+            if (update.attempt_number) {
+                this.attemptNumber = update.attempt_number;
+            }
+            if (update.max_attempts) {
+                this.maxAttempts = update.max_attempts;
+            }
+            this.updateHearts(update.attempts_remaining || (this.maxAttempts - this.attemptNumber + 1));
+            this.updateStatus('Game started!');
+            this.updateStageTimer(update.time_remaining);
+        } else if (update.status === 'population_died') {
+            // Population died - show prompt input modal
+            this.attemptNumber = update.attempt_number || this.attemptNumber;
+            this.maxAttempts = update.max_attempts || this.maxAttempts;
+            this.updateHearts(update.attempts_remaining || (this.maxAttempts - this.attemptNumber));
+            this.showPopulationDiedModal(update);
         } else if (update.status === 'game_complete') {
-            this.showFinalResults(update.final_results);
+            this.attemptNumber = update.attempt_number || this.attemptNumber;
+            this.maxAttempts = update.max_attempts || this.maxAttempts;
+            this.updateHearts(0);
+            this.showFinalResults(update.final_results, update.current_prompt, update.energy_events || []);
         } else if (update.status === 'finished') {
             this.updateStatus(`Game finished! Reason: ${update.reason}`);
             if (this.ws) {
@@ -120,85 +200,164 @@ class GameClient {
     updateStageTimer(timeRemaining) {
         const timerEl = document.getElementById('stageTimer');
         if (timerEl) {
-            timerEl.textContent = `Stage ${this.currentStage} - Time: ${timeRemaining}s`;
+            if (timeRemaining === null || timeRemaining === undefined) {
+                timerEl.textContent = `Stage ${this.currentStage} - No time limit`;
+            } else {
+                timerEl.textContent = `Stage ${this.currentStage} - Time: ${timeRemaining}s`;
+            }
         }
+    }
+
+    updateHearts(attemptsRemaining) {
+        const heartsEl = document.getElementById('hearts');
+        if (heartsEl) {
+            const hearts = '❤️'.repeat(Math.max(0, attemptsRemaining));
+            heartsEl.textContent = hearts || '💔';
+        }
+    }
+
+    showPopulationDiedModal(update) {
+        const modal = document.getElementById('resultsModal');
+        const content = document.getElementById('resultsContent');
+        const promptSection = document.getElementById('promptUpdateSection');
+        
+        if (!modal || !content) return;
+        
+        // Show death message
+        const currentPrompt = update.current_prompt || 'N/A';
+        const energyEvents = update.energy_events || [];
+        
+        // Format energy events list
+        let energyEventsHtml = '';
+        if (energyEvents.length > 0) {
+            energyEventsHtml = `
+                <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #856404;">Energy Events (This Attempt):</p>
+                    <ul style="margin: 0; padding-left: 20px; color: #333;">
+                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: monospace;">${event}</li>`).join('')}
+                    </ul>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #666; font-style: italic;">Use this information to update your prompt and improve survival strategies.</p>
+                </div>
+            `;
+        } else {
+            energyEventsHtml = `
+                <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #999;">
+                    <p style="margin: 0; color: #666; font-style: italic;">No energy events recorded this attempt.</p>
+                </div>
+            `;
+        }
+        
+        content.innerHTML = `
+            <h2>Population Extinct!</h2>
+            <p style="color: #F44336; font-size: 18px; font-weight: bold;">All creatures have died.</p>
+            <div style="margin: 20px 0;">
+                <p><strong>Attempt:</strong> ${update.attempt_number || this.attemptNumber} / ${update.max_attempts || this.maxAttempts}</p>
+                <p><strong>Attempts Remaining:</strong> ${update.attempts_remaining || (this.maxAttempts - this.attemptNumber)}</p>
+                <p><strong>Turn:</strong> ${update.turn || 0}</p>
+            </div>
+            ${energyEventsHtml}
+            <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #2196F3;">
+                <p style="margin: 0 0 8px 0; font-weight: bold; color: #555;">Current Prompt:</p>
+                <p style="margin: 0; color: #333; font-style: italic; word-wrap: break-word;">"${currentPrompt}"</p>
+            </div>
+            <p style="color: #666;">Update your creatures' behavior to help them survive in the next attempt!</p>
+        `;
+        
+        // Show prompt input section
+        if (promptSection) {
+            promptSection.style.display = 'block';
+            const promptInput = document.getElementById('promptUpdateInput');
+            if (promptInput) {
+                promptInput.value = ''; // Clear previous input
+            }
+        }
+        
+        // Hide close button (user must submit prompt)
+        const closeBtn = modal.querySelector('.close');
+        if (closeBtn) {
+            closeBtn.style.display = 'none';
+        }
+        
+        modal.style.display = 'block';
     }
 
     showResults(results, stage) {
         const modal = document.getElementById('resultsModal');
         const content = document.getElementById('resultsContent');
         
-        const p1 = results.player1;
-        const p2 = results.player2;
-        const winner = results.winner;
+        const player = results.player;
+        const survived = results.survived;
         
         content.innerHTML = `
-            <h2>Stage ${stage} Results</h2>
-            <div class="results-grid">
-                <div class="player-results">
-                    <h3>Player 1</h3>
-                    <p><strong>Alive:</strong> ${p1.alive ? 'Yes' : 'No'}</p>
-                    <p><strong>Energy:</strong> ${p1.energy}</p>
-                    <p><strong>Age:</strong> ${p1.age}</p>
-                    <p><strong>Stage:</strong> ${p1.stage}</p>
-                    <p><strong>Color:</strong> ${p1.color}</p>
-                    <p><strong>Speed:</strong> ${p1.speed}</p>
-                </div>
-                <div class="player-results">
-                    <h3>Player 2</h3>
-                    <p><strong>Alive:</strong> ${p2.alive ? 'Yes' : 'No'}</p>
-                    <p><strong>Energy:</strong> ${p2.energy}</p>
-                    <p><strong>Age:</strong> ${p2.age}</p>
-                    <p><strong>Stage:</strong> ${p2.stage}</p>
-                    <p><strong>Color:</strong> ${p2.color}</p>
-                    <p><strong>Speed:</strong> ${p2.speed}</p>
-                </div>
+            <h2>Game Results</h2>
+            <div class="player-results">
+                <h3>Your Creature</h3>
+                <p><strong>Alive:</strong> ${player.alive ? 'Yes' : 'No'}</p>
+                <p><strong>Energy:</strong> ${player.energy}</p>
+                <p><strong>Age:</strong> ${player.age}</p>
+                <p><strong>Stage:</strong> ${player.stage}</p>
+                <p><strong>Color:</strong> ${player.color}</p>
+                <p><strong>Speed:</strong> ${player.speed}</p>
             </div>
-            ${winner ? `<p class="winner">Winner: Player ${winner}!</p>` : '<p class="winner">Tie!</p>'}
+            ${survived ? `<p class="winner">You survived!</p>` : '<p class="winner">Your creature did not survive.</p>'}
         `;
         
         modal.style.display = 'block';
     }
 
-    showPromptUpdateForm(currentTraits) {
-        const modal = document.getElementById('promptUpdateModal');
-        const prompt1Input = document.getElementById('promptUpdate1');
-        const prompt2Input = document.getElementById('promptUpdate2');
-        
-        // Pre-fill with current traits as suggestions
-        prompt1Input.value = `Evolved: ${currentTraits.traits1.color}, speed ${currentTraits.traits1.speed}, ${currentTraits.traits1.diet}`;
-        prompt2Input.value = `Evolved: ${currentTraits.traits2.color}, speed ${currentTraits.traits2.speed}, ${currentTraits.traits2.diet}`;
-        
-        modal.style.display = 'block';
-    }
 
-    showFinalResults(results) {
+    showFinalResults(results, currentPrompt, energyEvents = []) {
         const modal = document.getElementById('resultsModal');
         const content = document.getElementById('resultsContent');
+        const promptSection = document.getElementById('promptUpdateSection');
+        const closeBtn = modal.querySelector('.close');
         
-        const p1 = results.player1;
-        const p2 = results.player2;
-        const winner = results.winner;
+        const player = results.player;
+        const survived = results.survived;
+        const prompt = currentPrompt || 'N/A';
+        
+        // Format energy events list
+        let energyEventsHtml = '';
+        if (energyEvents && energyEvents.length > 0) {
+            energyEventsHtml = `
+                <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #856404;">Energy Events (Final Attempt):</p>
+                    <ul style="margin: 0; padding-left: 20px; color: #333;">
+                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: monospace;">${event}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
         
         content.innerHTML = `
             <h2>Final Results - Game Complete!</h2>
-            <div class="results-grid">
-                <div class="player-results">
-                    <h3>Player 1</h3>
-                    <p><strong>Final Energy:</strong> ${p1.energy}</p>
-                    <p><strong>Final Stage:</strong> ${p1.stage}</p>
-                    <p><strong>Survived:</strong> ${p1.survival ? 'Yes' : 'No'}</p>
-                </div>
-                <div class="player-results">
-                    <h3>Player 2</h3>
-                    <p><strong>Final Energy:</strong> ${p2.energy}</p>
-                    <p><strong>Final Stage:</strong> ${p2.stage}</p>
-                    <p><strong>Survived:</strong> ${p2.survival ? 'Yes' : 'No'}</p>
-                </div>
+            <div class="player-results">
+                <h3>Your Creature</h3>
+                <p><strong>Final Energy:</strong> ${player.energy}</p>
+                <p><strong>Final Stage:</strong> ${player.stage}</p>
+                <p><strong>Survived:</strong> ${survived ? 'Yes' : 'No'}</p>
+                <p><strong>Age:</strong> ${player.age}</p>
+                <p><strong>Color:</strong> ${player.color}</p>
+                <p><strong>Speed:</strong> ${player.speed}</p>
             </div>
-            ${winner ? `<p class="winner">🏆 Winner: Player ${winner}!</p>` : '<p class="winner">Tie!</p>'}
+            ${energyEventsHtml}
+            <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #2196F3;">
+                <p style="margin: 0 0 8px 0; font-weight: bold; color: #555;">Final Prompt:</p>
+                <p style="margin: 0; color: #333; font-style: italic; word-wrap: break-word;">"${prompt}"</p>
+            </div>
+            ${survived ? `<p class="winner">🏆 You survived!</p>` : '<p class="winner">Your creature did not survive.</p>'}
             <button onclick="document.getElementById('resultsModal').style.display='none'">Close</button>
         `;
+        
+        // Hide prompt input section for final results
+        if (promptSection) {
+            promptSection.style.display = 'none';
+        }
+        
+        // Show close button
+        if (closeBtn) {
+            closeBtn.style.display = 'block';
+        }
         
         modal.style.display = 'block';
     }
@@ -216,7 +375,6 @@ class GameClient {
         // Draw resources
         if (this.gameState.world.resources) {
             this.gameState.world.resources.food.forEach(food => this.drawFood(food));
-            this.gameState.world.resources.poison.forEach(p => this.drawPoison(p));
         }
 
         // Draw creatures
@@ -395,17 +553,44 @@ class GameClient {
     drawFood(food) {
         const x = food.x * this.cellSize + this.cellSize / 2;
         const y = food.y * this.cellSize + this.cellSize / 2;
-        this.ctx.fillStyle = '#00AA00';
-        this.ctx.fillRect(x - 5, y - 5, 10, 10);
-    }
-
-    drawPoison(poison) {
-        const x = poison.x * this.cellSize + this.cellSize / 2;
-        const y = poison.y * this.cellSize + this.cellSize / 2;
-        this.ctx.fillStyle = '#FF0000';
-        this.ctx.beginPath();
-        this.ctx.arc(x, y, 6, 0, Math.PI * 2);
-        this.ctx.fill();
+        
+        // Get food type, default to apple if not specified
+        const foodType = food.type || 'apple';
+        
+        // Save context state
+        this.ctx.save();
+        
+        // Draw colored shapes based on food type (more reliable than emojis)
+        this.ctx.fillStyle = foodType === 'apple' ? '#FF4444' : 
+                             (foodType === 'banana' ? '#FFEB3B' : '#9C27B0');
+        
+        if (foodType === 'apple') {
+            // Red circle for apple
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 10, 0, Math.PI * 2);
+            this.ctx.fill();
+            // Add a small green stem
+            this.ctx.fillStyle = '#4CAF50';
+            this.ctx.fillRect(x - 2, y - 12, 4, 4);
+        } else if (foodType === 'banana') {
+            // Yellow curved shape for banana
+            this.ctx.beginPath();
+            this.ctx.ellipse(x, y, 8, 12, -0.3, 0, Math.PI * 2);
+            this.ctx.fill();
+        } else if (foodType === 'grapes') {
+            // Purple circles for grapes
+            this.ctx.fillStyle = '#9C27B0';
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 2; j++) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(x - 6 + i * 6, y - 4 + j * 8, 4, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+        }
+        
+        // Restore context state
+        this.ctx.restore();
     }
 
     drawUI(turn) {
@@ -436,10 +621,10 @@ class GameClient {
         }
     }
 
-    async previewTraits(prompt, playerId) {
+    async previewTraits(prompt, playerId, isEvolution = false) {
         if (!prompt || prompt.trim().length === 0) {
-            this.clearPreview(playerId);
-            return;
+            this.clearPreview(playerId, isEvolution);
+            return Promise.reject(new Error('Empty prompt'));
         }
 
         try {
@@ -480,19 +665,22 @@ class GameClient {
             }
             
             if (data.traits) {
-                this.updatePreview(playerId, data.traits);
+                this.updatePreview(playerId, data.traits, data.sprite_url, isEvolution);
+                return Promise.resolve();
             } else {
                 throw new Error('No traits in response');
             }
         } catch (error) {
             console.error(`Error previewing traits for Player ${playerId}:`, error);
-            this.showPreviewError(playerId);
+            this.showPreviewError(playerId, isEvolution);
+            return Promise.reject(error);
         }
     }
 
-    updatePreview(playerId, traits) {
-        const previewDiv = document.getElementById(`preview${playerId}`);
-        const traitsGrid = document.getElementById(`traits${playerId}`);
+    updatePreview(playerId, traits, spriteUrl, isEvolution = false) {
+        const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
+        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
+        const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
         if (!previewDiv || !traitsGrid) {
             console.error(`Preview elements not found for Player ${playerId}`);
@@ -520,11 +708,22 @@ class GameClient {
             traitItem.innerHTML = `<span class="trait-label">${label}:</span> <span class="trait-value">${value}</span>`;
             traitsGrid.appendChild(traitItem);
         }
+
+        // Display sprite image if available
+        if (spriteContainer && spriteUrl) {
+            const fullUrl = `http://localhost:8000${spriteUrl}`;
+            spriteContainer.innerHTML = `<img src="${fullUrl}" alt="Creature sprite" class="preview-sprite" />`;
+            spriteContainer.style.display = 'flex';
+        } else if (spriteContainer) {
+            spriteContainer.innerHTML = '';
+            spriteContainer.style.display = 'none';
+        }
     }
 
-    clearPreview(playerId) {
-        const previewDiv = document.getElementById(`preview${playerId}`);
-        const traitsGrid = document.getElementById(`traits${playerId}`);
+    clearPreview(playerId, isEvolution = false) {
+        const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
+        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
+        const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.remove('loading');
@@ -532,11 +731,16 @@ class GameClient {
         if (traitsGrid) {
             traitsGrid.innerHTML = '<div style="color: #999; font-style: italic;">Enter a description to see traits...</div>';
         }
+        if (spriteContainer) {
+            spriteContainer.innerHTML = '';
+            spriteContainer.style.display = 'none';
+        }
     }
 
-    showPreviewError(playerId) {
-        const previewDiv = document.getElementById(`preview${playerId}`);
-        const traitsGrid = document.getElementById(`traits${playerId}`);
+    showPreviewError(playerId, isEvolution = false) {
+        const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
+        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
+        const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.remove('loading');
@@ -544,11 +748,15 @@ class GameClient {
         if (traitsGrid) {
             traitsGrid.innerHTML = '<div style="color: #F44336;">Error parsing traits. Using defaults.</div>';
         }
+        if (spriteContainer) {
+            spriteContainer.innerHTML = '';
+            spriteContainer.style.display = 'none';
+        }
     }
 
-    showPreviewLoading(playerId) {
-        const previewDiv = document.getElementById(`preview${playerId}`);
-        const traitsGrid = document.getElementById(`traits${playerId}`);
+    showPreviewLoading(playerId, isEvolution = false) {
+        const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
+        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.add('loading');
@@ -557,88 +765,131 @@ class GameClient {
             traitsGrid.innerHTML = '<div>Parsing traits...</div>';
         }
     }
+
+    checkAndUpdateStartButton() {
+        const startBtn = document.getElementById('startBtn');
+        if (startBtn) {
+            startBtn.disabled = !this.confirmedPlayer;
+        }
+    }
 }
 
 // Initialize
 let client;
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[DOMContentLoaded] ===== Page loaded, initializing =====');
     const canvas = document.getElementById('gameCanvas');
+    console.log('[DOMContentLoaded] Canvas element:', canvas ? 'found' : 'not found');
     client = new GameClient(canvas);
+    console.log('[DOMContentLoaded] GameClient created');
 
-    // Set up debounced preview for Player 1
+    // Set up input change handlers to re-enable confirm buttons
     const prompt1Input = document.getElementById('prompt1');
     if (prompt1Input) {
         prompt1Input.addEventListener('input', () => {
-            clearTimeout(client.previewTimeouts[1]);
+            const confirmBtn = document.getElementById('confirmBtn1');
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirm';
+            }
+            // Clear preview and reset confirmation state when text changes
+            client.confirmedPlayer = false;
+            client.clearPreview(1);
+            client.checkAndUpdateStartButton();
+        });
+    }
+
+    // Set up confirm button handler
+    const confirmBtn1 = document.getElementById('confirmBtn1');
+    if (confirmBtn1) {
+        confirmBtn1.onclick = () => {
+            const prompt = prompt1Input.value.trim();
+            if (!prompt) {
+                alert('Please enter a description first!');
+                return;
+            }
+            confirmBtn1.disabled = true;
+            confirmBtn1.textContent = 'Confirming...';
             client.showPreviewLoading(1);
-            client.previewTimeouts[1] = setTimeout(() => {
-                const prompt = prompt1Input.value.trim();
-                client.previewTraits(prompt, 1);
-            }, 500);
-        });
-        // Trigger initial preview if text already exists
-        if (prompt1Input.value.trim()) {
-            setTimeout(() => {
-                client.previewTraits(prompt1Input.value.trim(), 1);
-            }, 100);
-        }
+            client.previewTraits(prompt, 1).then(() => {
+                confirmBtn1.textContent = 'Confirmed';
+                client.confirmedPlayer = true;
+                client.checkAndUpdateStartButton();
+            }).catch(() => {
+                confirmBtn1.disabled = false;
+                confirmBtn1.textContent = 'Confirm';
+                client.confirmedPlayer = false;
+                client.checkAndUpdateStartButton();
+            });
+        };
     }
 
-    // Set up debounced preview for Player 2
-    const prompt2Input = document.getElementById('prompt2');
-    if (prompt2Input) {
-        prompt2Input.addEventListener('input', () => {
-            clearTimeout(client.previewTimeouts[2]);
-            client.showPreviewLoading(2);
-            client.previewTimeouts[2] = setTimeout(() => {
-                const prompt = prompt2Input.value.trim();
-                client.previewTraits(prompt, 2);
-            }, 500);
-        });
-        // Trigger initial preview if text already exists
-        if (prompt2Input.value.trim()) {
-            setTimeout(() => {
-                client.previewTraits(prompt2Input.value.trim(), 2);
-            }, 100);
-        }
-    }
-
+    // Disable Start Game button initially
     const startBtn = document.getElementById('startBtn');
-    startBtn.onclick = () => {
-        const prompt1 = document.getElementById('prompt1').value.trim();
-        const prompt2 = document.getElementById('prompt2').value.trim();
-
-        if (!prompt1 || !prompt2) {
-            alert('Please enter prompts for both players!');
-            return;
-        }
-
+    if (startBtn) {
         startBtn.disabled = true;
-        startBtn.textContent = 'Starting...';
-        document.getElementById('eventsList').innerHTML = '';
-        client.startGame(prompt1, prompt2).then(() => {
-            startBtn.disabled = false;
-            startBtn.textContent = 'Start Game';
-        }).catch(error => {
-            console.error('Error:', error);
-            startBtn.disabled = false;
-            startBtn.textContent = 'Start Game';
-        });
-    };
+        startBtn.onclick = () => {
+            const prompt = document.getElementById('prompt1').value.trim();
 
-    // Handle prompt update form submission
-    const updatePromptsBtn = document.getElementById('updatePromptsBtn');
-    if (updatePromptsBtn) {
-        updatePromptsBtn.onclick = () => {
-            const prompt1 = document.getElementById('promptUpdate1').value.trim();
-            const prompt2 = document.getElementById('promptUpdate2').value.trim();
-            
-            if (!prompt1 || !prompt2) {
-                alert('Please enter evolution descriptions for both players!');
+            if (!prompt) {
+                alert('Please enter a prompt!');
+                return;
+            }
+
+            startBtn.disabled = true;
+            startBtn.textContent = 'Starting...';
+            document.getElementById('eventsList').innerHTML = '';
+            client.startGame(prompt).then(() => {
+                startBtn.disabled = false;
+                startBtn.textContent = 'Start Game';
+            }).catch(error => {
+                console.error('Error:', error);
+                startBtn.disabled = false;
+                startBtn.textContent = 'Start Game';
+            });
+        };
+    }
+
+    // Set up prompt update submit button handler
+    const submitPromptUpdateBtn = document.getElementById('submitPromptUpdateBtn');
+    if (submitPromptUpdateBtn) {
+        submitPromptUpdateBtn.onclick = async () => {
+            const promptInput = document.getElementById('promptUpdateInput');
+            if (!promptInput || !promptInput.value.trim()) {
+                alert('Please enter a behavior update description!');
                 return;
             }
             
-            client.updatePrompts(prompt1, prompt2);
+            const prompt = promptInput.value.trim();
+            submitPromptUpdateBtn.disabled = true;
+            submitPromptUpdateBtn.textContent = 'Updating...';
+            
+            try {
+                await client.updatePrompts(prompt);
+                // Hide modal - game will continue automatically
+                const modal = document.getElementById('resultsModal');
+                const promptSection = document.getElementById('promptUpdateSection');
+                const closeBtn = modal.querySelector('.close');
+                
+                if (modal) {
+                    modal.style.display = 'none';
+                }
+                if (promptSection) {
+                    promptSection.style.display = 'none';
+                }
+                if (closeBtn) {
+                    closeBtn.style.display = 'block';
+                }
+                
+                submitPromptUpdateBtn.disabled = false;
+                submitPromptUpdateBtn.textContent = 'Update Behavior & Continue';
+                promptInput.value = '';
+            } catch (error) {
+                console.error('Error updating prompt:', error);
+                alert(`Error updating behavior: ${error.message}`);
+                submitPromptUpdateBtn.disabled = false;
+                submitPromptUpdateBtn.textContent = 'Update Behavior & Continue';
+            }
         };
     }
 });

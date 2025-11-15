@@ -8,7 +8,7 @@ import re
 class LLMManager:
     """Manage local LLM inference via Ollama."""
 
-    def __init__(self, model_name: str = "qwen2:0.5b", ollama_url: str = "http://localhost:11434"):
+    def __init__(self, model_name: str = "gemma3:1b", ollama_url: str = "http://localhost:11434"):
         """
         Initialize LLM manager.
         
@@ -63,6 +63,55 @@ class LLMManager:
             raise
         except Exception as e:
             print(f"LLM call failed: {e}")
+            raise
+
+    async def chat(self, prompt: str, max_tokens: int = 15) -> str:
+        """
+        Call Ollama chat API to generate LLM response using chat format.
+        Each call creates a fresh chat session with no conversation history.
+        
+        Args:
+            prompt: Input prompt text (will be sent as user message)
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            Generated text response
+        """
+        if not self.session:
+            raise Exception("LLM session not initialized")
+        
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": max_tokens,
+                "stop": ["\n", ".", "\n\n"]
+            }
+        }
+
+        try:
+            async with self.session.post(
+                f"{self.ollama_url}/api/chat",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=2.0)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # Chat API returns message object with content
+                    message = data.get("message", {})
+                    return message.get("content", "").strip()
+                else:
+                    error_text = await resp.text()
+                    raise Exception(f"Ollama API error: {resp.status} - {error_text}")
+        except aiohttp.ClientError as e:
+            print(f"LLM chat call failed (network error): {e}")
+            raise
+        except Exception as e:
+            print(f"LLM chat call failed: {e}")
             raise
 
     async def parse_prompt(self, prompt_text: str) -> str:
