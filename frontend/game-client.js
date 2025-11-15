@@ -3,6 +3,7 @@
 class GameClient {
     constructor(canvasElement) {
         this.canvas = canvasElement;
+        this.spriteCache = {}; // Cache for loaded sprites: {url: Image}
         this.ctx = canvasElement.getContext('2d');
         this.ws = null;
         this.gameState = null;
@@ -11,6 +12,7 @@ class GameClient {
         this.animationFrame = null;
         this.currentStage = 1;
         this.timeRemaining = 60;
+        this.previewTimeouts = {}; // Store debounce timeouts for each player
     }
 
     async startGame(prompt1, prompt2) {
@@ -253,6 +255,57 @@ class GameClient {
         const x = creature.x * this.cellSize + this.cellSize / 2;
         const y = creature.y * this.cellSize + this.cellSize / 2;
 
+        // Try to use sprite if available
+        if (creature.sprite_url) {
+            const sprite = this.spriteCache[creature.sprite_url];
+            if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+                // Sprite loaded successfully, draw it
+                const spriteSize = 32; // Size to draw sprite on canvas
+                this.ctx.drawImage(
+                    sprite,
+                    x - spriteSize / 2,
+                    y - spriteSize / 2,
+                    spriteSize,
+                    spriteSize
+                );
+                
+                // Draw energy indicator on top
+                this.drawEnergyBar(x, y, creature.energy);
+                return;
+            } else if (!sprite || (sprite && !sprite.complete)) {
+                // Sprite not in cache or still loading, start loading it
+                if (!sprite) {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous'; // Allow CORS if needed
+                    img.onload = () => {
+                        console.log(`✓ Sprite loaded: ${creature.sprite_url}`);
+                        this.spriteCache[creature.sprite_url] = img;
+                        // Trigger redraw
+                        if (this.animationFrame) {
+                            cancelAnimationFrame(this.animationFrame);
+                        }
+                        this.animationFrame = requestAnimationFrame(() => this.render());
+                    };
+                    img.onerror = (e) => {
+                        console.warn(`✗ Failed to load sprite: ${creature.sprite_url}`, e);
+                        // Mark as failed to avoid retrying
+                        this.spriteCache[creature.sprite_url] = null;
+                    };
+                    const fullUrl = `http://localhost:8000${creature.sprite_url}`;
+                    console.log(`Loading sprite: ${fullUrl}`);
+                    img.src = fullUrl;
+                    this.spriteCache[creature.sprite_url] = img; // Store reference while loading
+                }
+            }
+            // If sprite is loading or failed, fall through to canvas drawing
+        } else {
+            // Debug: log when sprite_url is missing
+            if (creature.id === 1 || creature.id === 2) {
+                console.log(`Creature ${creature.id} has no sprite_url, using canvas drawing`);
+            }
+        }
+
+        // Fallback to canvas drawing (original implementation)
         const colorMap = {
             'blue': '#2196F3',
             'red': '#F44336',
@@ -267,7 +320,16 @@ class GameClient {
             'white': '#FFFFFF'
         };
 
-        const fillColor = colorMap[creature.color] || creature.color || '#2196F3';
+        // Normalize color to lowercase string for matching
+        const creatureColor = creature.color ? String(creature.color).toLowerCase().trim() : null;
+        
+        // Debug logging (can be removed later)
+        if (!creatureColor || !colorMap[creatureColor]) {
+            console.warn(`Creature ${creature.id} has invalid or missing color:`, creature.color, '-> using default blue');
+        }
+        
+        // Get color from map, or use creatureColor if it's already a hex code, or default to blue
+        const fillColor = colorMap[creatureColor] || (creatureColor && creatureColor.startsWith('#') ? creatureColor : '#2196F3');
         const stage = creature.stage || 1;
         
         this.ctx.fillStyle = fillColor;
@@ -314,7 +376,11 @@ class GameClient {
         this.ctx.stroke();
 
         // Draw energy indicator
-        const energyPercent = creature.energy / 100;
+        this.drawEnergyBar(x, y, creature.energy);
+    }
+
+    drawEnergyBar(x, y, energy) {
+        const energyPercent = energy / 100;
         const barWidth = 16;
         const barHeight = 3;
         const barX = x - barWidth / 2;
@@ -369,6 +435,128 @@ class GameClient {
             eventsDiv.scrollTop = eventsDiv.scrollHeight;
         }
     }
+
+    async previewTraits(prompt, playerId) {
+        if (!prompt || prompt.trim().length === 0) {
+            this.clearPreview(playerId);
+            return;
+        }
+
+        try {
+            console.log(`Previewing traits for Player ${playerId}:`, prompt);
+            const response = await fetch('http://localhost:8000/parse_prompt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log(`[Player ${playerId}] Received response:`, data);
+            
+            // Log debug info if available
+            if (data.debug) {
+                console.group(`[Player ${playerId}] Debug Info`);
+                console.log('Method:', data.debug.method);
+                console.log('LLM Available:', data.debug.llm_available);
+                console.log('Timing:', data.debug.timing);
+                if (data.debug.errors && data.debug.errors.length > 0) {
+                    console.warn('Errors:', data.debug.errors);
+                }
+                if (data.debug.llm_response) {
+                    console.log('LLM Response:', data.debug.llm_response);
+                }
+                if (data.debug.raw_traits) {
+                    console.log('Raw Traits:', data.debug.raw_traits);
+                }
+                if (data.debug.validation_changes) {
+                    console.log('Validation Changes:', data.debug.validation_changes);
+                }
+                console.groupEnd();
+            }
+            
+            if (data.traits) {
+                this.updatePreview(playerId, data.traits);
+            } else {
+                throw new Error('No traits in response');
+            }
+        } catch (error) {
+            console.error(`Error previewing traits for Player ${playerId}:`, error);
+            this.showPreviewError(playerId);
+        }
+    }
+
+    updatePreview(playerId, traits) {
+        const previewDiv = document.getElementById(`preview${playerId}`);
+        const traitsGrid = document.getElementById(`traits${playerId}`);
+        
+        if (!previewDiv || !traitsGrid) {
+            console.error(`Preview elements not found for Player ${playerId}`);
+            return;
+        }
+
+        console.log(`Updating preview for Player ${playerId} with traits:`, traits);
+        previewDiv.classList.remove('loading');
+        traitsGrid.innerHTML = '';
+
+        const traitLabels = {
+            'color': 'Color',
+            'speed': 'Speed',
+            'diet': 'Diet',
+            'population': 'Population',
+            'social': 'Social',
+            'aggression': 'Aggression',
+            'size': 'Size'
+        };
+
+        for (const [key, label] of Object.entries(traitLabels)) {
+            const traitItem = document.createElement('div');
+            traitItem.className = 'trait-item';
+            const value = traits[key] !== undefined ? traits[key] : 'N/A';
+            traitItem.innerHTML = `<span class="trait-label">${label}:</span> <span class="trait-value">${value}</span>`;
+            traitsGrid.appendChild(traitItem);
+        }
+    }
+
+    clearPreview(playerId) {
+        const previewDiv = document.getElementById(`preview${playerId}`);
+        const traitsGrid = document.getElementById(`traits${playerId}`);
+        
+        if (previewDiv) {
+            previewDiv.classList.remove('loading');
+        }
+        if (traitsGrid) {
+            traitsGrid.innerHTML = '<div style="color: #999; font-style: italic;">Enter a description to see traits...</div>';
+        }
+    }
+
+    showPreviewError(playerId) {
+        const previewDiv = document.getElementById(`preview${playerId}`);
+        const traitsGrid = document.getElementById(`traits${playerId}`);
+        
+        if (previewDiv) {
+            previewDiv.classList.remove('loading');
+        }
+        if (traitsGrid) {
+            traitsGrid.innerHTML = '<div style="color: #F44336;">Error parsing traits. Using defaults.</div>';
+        }
+    }
+
+    showPreviewLoading(playerId) {
+        const previewDiv = document.getElementById(`preview${playerId}`);
+        const traitsGrid = document.getElementById(`traits${playerId}`);
+        
+        if (previewDiv) {
+            previewDiv.classList.add('loading');
+        }
+        if (traitsGrid) {
+            traitsGrid.innerHTML = '<div>Parsing traits...</div>';
+        }
+    }
 }
 
 // Initialize
@@ -376,6 +564,44 @@ let client;
 document.addEventListener('DOMContentLoaded', () => {
     const canvas = document.getElementById('gameCanvas');
     client = new GameClient(canvas);
+
+    // Set up debounced preview for Player 1
+    const prompt1Input = document.getElementById('prompt1');
+    if (prompt1Input) {
+        prompt1Input.addEventListener('input', () => {
+            clearTimeout(client.previewTimeouts[1]);
+            client.showPreviewLoading(1);
+            client.previewTimeouts[1] = setTimeout(() => {
+                const prompt = prompt1Input.value.trim();
+                client.previewTraits(prompt, 1);
+            }, 500);
+        });
+        // Trigger initial preview if text already exists
+        if (prompt1Input.value.trim()) {
+            setTimeout(() => {
+                client.previewTraits(prompt1Input.value.trim(), 1);
+            }, 100);
+        }
+    }
+
+    // Set up debounced preview for Player 2
+    const prompt2Input = document.getElementById('prompt2');
+    if (prompt2Input) {
+        prompt2Input.addEventListener('input', () => {
+            clearTimeout(client.previewTimeouts[2]);
+            client.showPreviewLoading(2);
+            client.previewTimeouts[2] = setTimeout(() => {
+                const prompt = prompt2Input.value.trim();
+                client.previewTraits(prompt, 2);
+            }, 500);
+        });
+        // Trigger initial preview if text already exists
+        if (prompt2Input.value.trim()) {
+            setTimeout(() => {
+                client.previewTraits(prompt2Input.value.trim(), 2);
+            }, 100);
+        }
+    }
 
     const startBtn = document.getElementById('startBtn');
     startBtn.onclick = () => {

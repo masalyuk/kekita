@@ -21,7 +21,9 @@ class Creature(ABC):
         """
         self.id = creature_id
         self.player_id = player_id
-        self.color = traits.get('color', 'blue')
+        # Ensure color is a lowercase string
+        color = traits.get('color', 'blue')
+        self.color = str(color).lower().strip() if color else 'blue'
         self.speed = traits.get('speed', 3)
         self.diet = traits.get('diet', 'omnivore')
         self.x = x

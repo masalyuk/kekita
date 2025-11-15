@@ -106,6 +106,7 @@ class Organism(Creature):
             'alive': self.alive,
             'stage': self.stage,
             'player_id': self.player_id,
-            'parts': self.parts.copy()
+            'parts': self.parts.copy(),
+            'sprite_url': getattr(self, 'sprite_url', None)
         }
 

@@ -32,6 +32,7 @@ class Cell(Creature):
             'age': self.age,
             'alive': self.alive,
             'stage': self.stage,
-            'player_id': self.player_id
+            'player_id': self.player_id,
+            'sprite_url': getattr(self, 'sprite_url', None)
         }
 

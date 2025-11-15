@@ -6,7 +6,7 @@ import time
 class StageController:
     """Manages stage timing and progression."""
     
-    def __init__(self, stage_duration=60):
+    def __init__(self, stage_duration=20):
         """
         Initialize stage controller.
         

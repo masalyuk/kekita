@@ -2,9 +2,11 @@
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import asyncio
 import uuid
+import os
 
 from game.llm_manager import LLMManager
 from game.world import World
@@ -15,6 +17,7 @@ from game.hybrid_decision_maker import HybridDecisionMaker
 from game.stage_controller import StageController
 from game.stage_results import StageResults
 from game.stage_manager import StageManager
+from game.sprite_generator import SpriteGenerator
 
 app = FastAPI()
 
@@ -27,8 +30,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-llm_manager = LLMManager()
+llm_manager = LLMManager()  # For game decisions (qwen2:0.5b)
+llm_parser = LLMManager(model_name="qwen3:4b")  # For prompt parsing (larger model, higher temperature)
+sprite_generator = SpriteGenerator()  # For generating creature sprites
 game_state = {}  # Store active games: {game_id: {simulation, decision_maker, stage_controller, current_stage, prompts, ...}}
+
+# Mount static files for sprite serving
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+os.makedirs(os.path.join(static_dir, "sprites"), exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Test endpoint to verify static files are accessible
+@app.get("/test_sprite/{creature_id}/{stage}")
+async def test_sprite(creature_id: int, stage: int):
+    """Test endpoint to check if sprite exists."""
+    sprite_path = os.path.join(static_dir, "sprites", f"{creature_id}_{stage}.png")
+    exists = os.path.exists(sprite_path)
+    return {
+        "sprite_path": sprite_path,
+        "exists": exists,
+        "url": f"/static/sprites/{creature_id}_{stage}.png",
+        "full_url": f"http://localhost:8000/static/sprites/{creature_id}_{stage}.png"
+    }
 
 
 class GameStartRequest(BaseModel):
@@ -41,18 +65,25 @@ class PromptUpdateRequest(BaseModel):
     prompt2: str
 
 
+class ParsePromptRequest(BaseModel):
+    prompt: str
+
+
 @app.on_event("startup")
 async def startup():
-    """Initialize LLM manager on startup."""
+    """Initialize LLM managers on startup."""
     await llm_manager.initialize()
-    print("LLM Manager initialized")
+    await llm_parser.initialize()
+    print("LLM Manager initialized (game decisions)")
+    print("LLM Parser initialized (prompt parsing)")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Clean up on shutdown."""
     await llm_manager.close()
-    print("LLM Manager closed")
+    await llm_parser.close()
+    print("LLM Managers closed")
 
 
 def apply_trait_evolution(creature, new_traits):
@@ -69,7 +100,9 @@ def apply_trait_evolution(creature, new_traits):
     
     # Update creature properties
     if 'color' in new_traits:
-        creature.color = new_traits['color']
+        # Ensure color is a lowercase string
+        color = new_traits['color']
+        creature.color = str(color).lower().strip() if color else 'blue'
     if 'speed' in new_traits:
         creature.speed = new_traits['speed']
     if 'diet' in new_traits:
@@ -79,21 +112,46 @@ def apply_trait_evolution(creature, new_traits):
 @app.post("/start_game")
 async def start_game(request: GameStartRequest):
     """Start a new game with 2 player prompts."""
-    traits1 = PromptParser.parse(request.prompt1)
-    traits2 = PromptParser.parse(request.prompt2)
+    traits1 = await PromptParser.parse(request.prompt1, llm_manager=llm_manager)
+    traits2 = await PromptParser.parse(request.prompt2, llm_manager=llm_manager)
 
     world = World(width=20, height=20)
     world.spawn_resources()
 
     # Spawn 1 creature per player (Stage 1)
+    print(f"[start_game] Creating creatures with traits1: {traits1}, traits2: {traits2}")
     cell1 = Cell(creature_id=1, traits=traits1, x=5, y=5, player_id=1)
     cell2 = Cell(creature_id=2, traits=traits2, x=15, y=15, player_id=2)
+    print(f"[start_game] Cell1 color: {cell1.color}, Cell2 color: {cell2.color}")
+    
+    # Generate sprites for both creatures (non-blocking, graceful fallback)
+    print(f"[start_game] Generating sprites for creatures...")
+    try:
+        sprite1_url = await sprite_generator.get_or_generate_sprite(request.prompt1, 1, 1)
+        if sprite1_url:
+            cell1.sprite_url = sprite1_url
+            print(f"[start_game] ✓ Sprite 1: {sprite1_url}")
+        else:
+            print(f"[start_game] ⚠ Sprite 1 generation failed, will use canvas drawing")
+    except Exception as e:
+        print(f"[start_game] ✗ Error generating sprite 1: {e}, will use canvas drawing")
+    
+    try:
+        sprite2_url = await sprite_generator.get_or_generate_sprite(request.prompt2, 2, 1)
+        if sprite2_url:
+            cell2.sprite_url = sprite2_url
+            print(f"[start_game] ✓ Sprite 2: {sprite2_url}")
+        else:
+            print(f"[start_game] ⚠ Sprite 2 generation failed, will use canvas drawing")
+    except Exception as e:
+        print(f"[start_game] ✗ Error generating sprite 2: {e}, will use canvas drawing")
+    
     world.add_cell(cell1)
     world.add_cell(cell2)
 
     simulation = Simulation(world, llm_manager)
     decision_maker = HybridDecisionMaker(llm_manager, timeout=10.0)
-    stage_controller = StageController(stage_duration=60)
+    stage_controller = StageController(stage_duration=20)
     stage_controller.start_stage(1)
 
     game_id = str(uuid.uuid4())
@@ -115,6 +173,109 @@ async def start_game(request: GameStartRequest):
     }
 
 
+@app.post("/parse_prompt")
+async def parse_prompt(request: ParsePromptRequest):
+    """Parse a single prompt and return extracted traits for preview."""
+    import time
+    start_time = time.time()
+    
+    print(f"\n{'='*60}")
+    print(f"[parse_prompt] === PARSING PROMPT ===")
+    print(f"[parse_prompt] Prompt: '{request.prompt}'")
+    print(f"[parse_prompt] Prompt length: {len(request.prompt)} chars")
+    
+    debug_info = {
+        'prompt': request.prompt,
+        'method': None,
+        'llm_available': llm_parser is not None and llm_parser.session is not None,
+        'llm_model': None,
+        'llm_response': None,
+        'raw_traits': None,
+        'validated_traits': None,
+        'errors': [],
+        'timing': {}
+    }
+    
+    try:
+        # Use LLM parser if available, otherwise use keyword parsing
+        if llm_parser and llm_parser.session:
+            print(f"[parse_prompt] ✓ LLM parser available (model: {llm_parser.model_name}), using LLM parsing")
+            debug_info['method'] = 'llm'
+            debug_info['llm_model'] = llm_parser.model_name
+            llm_start = time.time()
+            traits = await PromptParser.parse(request.prompt, llm_manager=llm_parser, debug_info=debug_info)
+            debug_info['timing']['llm_parse'] = time.time() - llm_start
+            print(f"[parse_prompt] ✓ LLM parsing completed in {debug_info['timing']['llm_parse']:.3f}s")
+            print(f"[parse_prompt] Final traits: {traits}")
+        else:
+            # LLM not available, use keyword parsing
+            print(f"[parse_prompt] ✗ LLM parser not available (session={llm_parser.session if llm_parser else None})")
+            print(f"[parse_prompt] → Using keyword parsing")
+            debug_info['method'] = 'keyword'
+            keyword_start = time.time()
+            traits = PromptParser._parse_keywords(request.prompt)
+            debug_info['timing']['keyword_parse'] = time.time() - keyword_start
+            debug_info['raw_traits'] = traits
+            debug_info['validated_traits'] = traits
+            print(f"[parse_prompt] ✓ Keyword parsing completed in {debug_info['timing']['keyword_parse']:.3f}s")
+            print(f"[parse_prompt] Final traits: {traits}")
+        
+        debug_info['validated_traits'] = traits
+        
+        # Generate preview sprite (using temporary ID 0 for preview)
+        sprite_url = None
+        try:
+            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1)
+            if sprite_url:
+                print(f"[parse_prompt] ✓ Preview sprite generated: {sprite_url}")
+        except Exception as e:
+            print(f"[parse_prompt] ✗ Sprite generation failed: {e}")
+        
+        total_time = time.time() - start_time
+        debug_info['timing']['total'] = total_time
+        print(f"[parse_prompt] Total time: {total_time:.3f}s")
+        print(f"{'='*60}\n")
+        
+        return {
+            'success': True,
+            'traits': traits,
+            'sprite_url': sprite_url,
+            'debug': debug_info
+        }
+    except Exception as e:
+        print(f"[parse_prompt] ✗ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        debug_info['errors'].append(str(e))
+        # Return fallback traits on error
+        print(f"[parse_prompt] → Falling back to keyword parsing")
+        fallback_start = time.time()
+        traits = PromptParser._parse_keywords(request.prompt)
+        debug_info['timing']['fallback_parse'] = time.time() - fallback_start
+        debug_info['method'] = 'keyword_fallback'
+        debug_info['raw_traits'] = traits
+        debug_info['validated_traits'] = traits
+        print(f"[parse_prompt] Fallback result: {traits}")
+        total_time = time.time() - start_time
+        debug_info['timing']['total'] = total_time
+        print(f"{'='*60}\n")
+        
+        # Try to generate sprite even on error
+        sprite_url = None
+        try:
+            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1)
+        except Exception:
+            pass
+        
+        return {
+            'success': False,
+            'traits': traits,
+            'sprite_url': sprite_url,
+            'error': str(e),
+            'debug': debug_info
+        }
+
+
 @app.post("/update_prompts/{game_id}")
 async def update_prompts(game_id: str, request: PromptUpdateRequest):
     """Update prompts for next stage (evolution descriptions)."""
@@ -125,21 +286,61 @@ async def update_prompts(game_id: str, request: PromptUpdateRequest):
     if not game['waiting_for_prompts']:
         raise HTTPException(status_code=400, detail="Not waiting for prompt updates")
     
-    # Parse new prompts (evolution descriptions)
-    new_traits1 = PromptParser.parse(request.prompt1)
-    new_traits2 = PromptParser.parse(request.prompt2)
+    # Use LLM-based merging to intelligently merge current traits with evolution descriptions
+    # This preserves existing traits (like color) unless explicitly changed in the evolution description
+    print(f"[update_prompts] Merging traits for Player 1 with evolution: '{request.prompt1[:50]}...'")
+    print(f"[update_prompts] Current traits1: {game['current_traits']['traits1']}")
+    merged_traits1 = await PromptParser.merge_traits(
+        current_traits=game['current_traits']['traits1'],
+        evolution_description=request.prompt1,
+        llm_manager=llm_manager
+    )
+    print(f"[update_prompts] Merged traits1: {merged_traits1}")
     
-    # Merge with existing traits
-    merged_traits1 = {**game['current_traits']['traits1'], **new_traits1}
-    merged_traits2 = {**game['current_traits']['traits2'], **new_traits2}
+    print(f"[update_prompts] Merging traits for Player 2 with evolution: '{request.prompt2[:50]}...'")
+    print(f"[update_prompts] Current traits2: {game['current_traits']['traits2']}")
+    merged_traits2 = await PromptParser.merge_traits(
+        current_traits=game['current_traits']['traits2'],
+        evolution_description=request.prompt2,
+        llm_manager=llm_manager
+    )
+    print(f"[update_prompts] Merged traits2: {merged_traits2}")
     
     # Apply to creatures
     world = game['simulation'].world
+    current_stage = game.get('current_stage', 1)
+    
+    # Regenerate sprites for evolved creatures
+    # Combine original prompt with evolution description for better sprite generation
     for creature in world.cells:
         if creature.player_id == 1:
             apply_trait_evolution(creature, merged_traits1)
+            print(f"[update_prompts] Applied merged traits1 to creature {creature.id}, color: {creature.color}")
+            # Regenerate sprite with evolution description
+            try:
+                evolution_prompt = f"{game['original_prompts']['prompt1']}, evolved: {request.prompt1}"
+                sprite_url = await sprite_generator.generate_sprite(evolution_prompt, creature.id, current_stage, force_regenerate=True)
+                if sprite_url:
+                    creature.sprite_url = sprite_url
+                    print(f"[update_prompts] ✓ Regenerated sprite for creature {creature.id}: {sprite_url}")
+                else:
+                    print(f"[update_prompts] ⚠ Sprite regeneration failed for creature {creature.id}, keeping existing or using canvas")
+            except Exception as e:
+                print(f"[update_prompts] ✗ Error regenerating sprite for creature {creature.id}: {e}, keeping existing or using canvas")
         elif creature.player_id == 2:
             apply_trait_evolution(creature, merged_traits2)
+            print(f"[update_prompts] Applied merged traits2 to creature {creature.id}, color: {creature.color}")
+            # Regenerate sprite with evolution description
+            try:
+                evolution_prompt = f"{game['original_prompts']['prompt2']}, evolved: {request.prompt2}"
+                sprite_url = await sprite_generator.generate_sprite(evolution_prompt, creature.id, current_stage, force_regenerate=True)
+                if sprite_url:
+                    creature.sprite_url = sprite_url
+                    print(f"[update_prompts] ✓ Regenerated sprite for creature {creature.id}: {sprite_url}")
+                else:
+                    print(f"[update_prompts] ⚠ Sprite regeneration failed for creature {creature.id}, keeping existing or using canvas")
+            except Exception as e:
+                print(f"[update_prompts] ✗ Error regenerating sprite for creature {creature.id}: {e}, keeping existing or using canvas")
     
     # Update game state
     game['current_traits'] = {'traits1': merged_traits1, 'traits2': merged_traits2}

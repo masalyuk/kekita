@@ -132,8 +132,14 @@ class Simulation:
                 turn_events.extend(evolution_events)
 
         # 6. Return new state for frontend
+        creatures_data = [c.to_dict() for c in self.world.cells if c.alive]
+        # Debug: log creature colors and sprite URLs being sent
+        if creatures_data:
+            colors_info = ', '.join([f"Creature {c['id']}: color={c.get('color', 'MISSING')}, sprite_url={c.get('sprite_url', 'None')}" for c in creatures_data])
+            print(f"[simulation.step] Sending creatures: {colors_info}")
+        
         return {
-            'creatures': [c.to_dict() for c in self.world.cells if c.alive],
+            'creatures': creatures_data,
             'resources': {
                 'food': self.world.food,
                 'poison': self.world.poison,

@@ -37,6 +37,39 @@
             margin-top: 0;
             color: #555;
         }
+        .trait-preview {
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+            min-height: 60px;
+        }
+        .trait-preview.loading {
+            color: #999;
+            font-style: italic;
+        }
+        .trait-preview h4 {
+            margin: 0 0 8px 0;
+            color: #666;
+            font-size: 13px;
+        }
+        .trait-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+        }
+        .trait-item {
+            padding: 2px 4px;
+        }
+        .trait-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .trait-value {
+            color: #2196F3;
+        }
         textarea {
             width: 100%;
             height: 80px;
@@ -163,10 +196,22 @@
             <div class="prompt-box">
                 <h2>Player 1</h2>
                 <textarea id="prompt1" placeholder="Describe your creature: e.g., 'Small blue herbivores, move fast, travel in groups of 20, cautious'"></textarea>
+                <div id="preview1" class="trait-preview">
+                    <h4>Traits Preview</h4>
+                    <div class="trait-grid" id="traits1">
+                        <div style="color: #999; font-style: italic; grid-column: 1 / -1;">Enter a description to see traits...</div>
+                    </div>
+                </div>
             </div>
             <div class="prompt-box">
                 <h2>Player 2</h2>
                 <textarea id="prompt2" placeholder="Describe your creature: e.g., 'Large red carnivores, slow but strong, solitary hunters'"></textarea>
+                <div id="preview2" class="trait-preview">
+                    <h4>Traits Preview</h4>
+                    <div class="trait-grid" id="traits2">
+                        <div style="color: #999; font-style: italic; grid-column: 1 / -1;">Enter a description to see traits...</div>
+                    </div>
+                </div>
             </div>
         </div>
 

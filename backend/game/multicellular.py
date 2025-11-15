@@ -89,7 +89,8 @@ class Multicellular(Creature):
             'stage': self.stage,
             'player_id': self.player_id,
             'colony_id': self.colony.id if self.colony else None,
-            'colony_size': colony_size
+            'colony_size': colony_size,
+            'sprite_url': getattr(self, 'sprite_url', None)
         }
     
     def get_position(self):
