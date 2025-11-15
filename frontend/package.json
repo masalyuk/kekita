@@ -1,0 +1,13 @@
+{
+  "name": "evolution-game-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for Evolution Game MVP",
+  "main": "index.html",
+  "scripts": {
+    "serve": "python -m http.server 8080"
+  },
+  "keywords": ["game", "evolution", "canvas"],
+  "author": "",
+  "license": "MIT"
+}
+
