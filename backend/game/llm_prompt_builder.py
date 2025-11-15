@@ -19,8 +19,24 @@ class LLMPromptBuilder:
         energy = cell.energy
         nearby = world_state['nearby']
 
-        # Compact format
-        prompt = f"E:{energy} @({cell.x},{cell.y})\n"
+        # Compact format with stage info
+        stage_info = ""
+        if hasattr(cell, 'stage'):
+            if cell.stage == 2:
+                if hasattr(cell, 'colony') and cell.colony:
+                    stage_info = f"Stage2:Colony({len(cell.colony.members)}) "
+            elif cell.stage == 3:
+                if hasattr(cell, 'parts'):
+                    parts_str = f"limbs:{cell.parts.get('limbs',0)} sensors:{cell.parts.get('sensors',0)}"
+                    stage_info = f"Stage3:{parts_str} "
+        
+        prompt = f"E:{energy} @({cell.x},{cell.y}) {stage_info}\n"
+
+        # Add memory if available
+        if hasattr(cell, 'memory') and cell.memory.events:
+            memory_str = cell.memory.to_compact_string(n=3)  # Last 3 events
+            if memory_str:
+                prompt += f"{memory_str}\n"
 
         # Add nearest significant objects
         if nearby['food']:

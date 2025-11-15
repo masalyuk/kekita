@@ -1,8 +1,10 @@
 """Cell class representing a single creature in the cellular stage."""
 
+from .creature import Creature
 
-class Cell:
-    """A primitive single-celled organism."""
+
+class Cell(Creature):
+    """A primitive single-celled organism (Stage 1)."""
 
     def __init__(self, creature_id, traits, x, y):
         """
@@ -14,15 +16,7 @@ class Cell:
             x: Initial x position
             y: Initial y position
         """
-        self.id = creature_id
-        self.color = traits.get('color', 'blue')
-        self.speed = traits.get('speed', 3)  # 1-5 scale
-        self.diet = traits.get('diet', 'omnivore')  # 'herbivore', 'carnivore', 'omnivore'
-        self.x = x
-        self.y = y
-        self.energy = 100
-        self.age = 0
-        self.alive = True
+        super().__init__(creature_id, traits, x, y, stage=1)
 
     def to_dict(self):
         """Serialize cell state for frontend."""
@@ -35,6 +29,7 @@ class Cell:
             'speed': self.speed,
             'diet': self.diet,
             'age': self.age,
-            'alive': self.alive
+            'alive': self.alive,
+            'stage': self.stage
         }
 

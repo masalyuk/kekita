@@ -120,7 +120,6 @@ class GameClient {
         const x = creature.x * this.cellSize + this.cellSize / 2;
         const y = creature.y * this.cellSize + this.cellSize / 2;
 
-        // Simple circle for now (replace with procedural sprite)
         const colorMap = {
             'blue': '#2196F3',
             'red': '#F44336',
@@ -136,14 +135,57 @@ class GameClient {
         };
 
         const fillColor = colorMap[creature.color] || creature.color || '#2196F3';
+        const stage = creature.stage || 1;
+        
         this.ctx.fillStyle = fillColor;
         this.ctx.beginPath();
-        this.ctx.arc(x, y, 10, 0, Math.PI * 2);
+        
+        // Different shapes for different stages
+        if (stage === 1) {
+            // Stage 1: Simple circle
+            this.ctx.arc(x, y, 10, 0, Math.PI * 2);
+        } else if (stage === 2) {
+            // Stage 2: Larger circle with multiple smaller circles (colony)
+            const colonySize = creature.colony_size || 1;
+            const radius = 12 + (colonySize * 2);
+            this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+            // Draw smaller circles around for colony members
+            for (let i = 0; i < Math.min(colonySize, 5); i++) {
+                const angle = (i * Math.PI * 2) / Math.min(colonySize, 5);
+                const offsetX = Math.cos(angle) * (radius * 0.6);
+                const offsetY = Math.sin(angle) * (radius * 0.6);
+                this.ctx.beginPath();
+                this.ctx.arc(x + offsetX, y + offsetY, 4, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+        } else if (stage === 3) {
+            // Stage 3: Complex shape (polygon with parts)
+            const limbs = creature.parts?.limbs || 4;
+            const radius = 15;
+            // Draw main body (larger circle)
+            this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+            this.ctx.fill();
+            // Draw limbs as lines
+            this.ctx.strokeStyle = fillColor;
+            this.ctx.lineWidth = 2;
+            for (let i = 0; i < limbs; i++) {
+                const angle = (i * Math.PI * 2) / limbs;
+                const startX = x + Math.cos(angle) * radius;
+                const startY = y + Math.sin(angle) * radius;
+                const endX = x + Math.cos(angle) * (radius + 8);
+                const endY = y + Math.sin(angle) * (radius + 8);
+                this.ctx.beginPath();
+                this.ctx.moveTo(startX, startY);
+                this.ctx.lineTo(endX, endY);
+                this.ctx.stroke();
+            }
+        }
+        
         this.ctx.fill();
 
         // Draw border
         this.ctx.strokeStyle = '#333';
-        this.ctx.lineWidth = 1;
+        this.ctx.lineWidth = stage === 3 ? 2 : 1;
         this.ctx.stroke();
 
         // Draw energy indicator
