@@ -31,13 +31,18 @@ class Simulation:
         """
         # 1. Get state for each creature
         actions = {}
+        print(f"[DEBUG] ===== Turn {self.world.turn} Starting =====")
+        print(f"[DEBUG] Total creatures: {len(self.world.cells)}, Alive: {sum(1 for c in self.world.cells if c.alive)}")
+        
         for cell in self.world.cells:
             if not cell.alive:
+                print(f"[DEBUG] Turn {self.world.turn}: Cell {cell.id} is dead, skipping")
                 continue
 
             # Get nearby objects
             nearby = self.world.get_nearby(cell)
             world_state = {'nearby': nearby}
+            print(f"[DEBUG] Turn {self.world.turn}: Cell {cell.id} nearby - food: {len(nearby['food'])}, poison: {len(nearby['poison'])}, enemies: {len(nearby['enemy'])}")
 
             # Record nearby food/enemies/poison to memory
             if hasattr(cell, 'memory'):
@@ -74,9 +79,14 @@ class Simulation:
             # 2. Call hybrid decision maker (LLM or rule-based)
             action = await decision_maker.decide(cell, world_state)
             actions[cell.id] = action
+            
+            # Debug logging
+            print(f"[DEBUG] Turn {self.world.turn}: Cell {cell.id} (Player {cell.player_id}) at ({cell.x}, {cell.y}) decided: {action}")
 
         # 3. Execute actions and get detailed event info
+        print(f"[DEBUG] Turn {self.world.turn}: Executing {len(actions)} actions: {actions}")
         turn_events, detailed_events = self.world.update_cells(actions)
+        print(f"[DEBUG] Turn {self.world.turn}: Generated {len(turn_events)} events")
         self.events.extend(turn_events)
 
         # 4. Record action outcomes to memory

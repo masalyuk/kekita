@@ -37,7 +37,8 @@ class StageManager:
                 creature_id=creature.id,  # Keep same ID
                 traits=creature.traits,
                 x=creature.x,
-                y=creature.y
+                y=creature.y,
+                player_id=creature.player_id
             )
             # Transfer memory
             new_creature.memory = creature.memory
@@ -55,7 +56,8 @@ class StageManager:
                     creature_id=creature.id,
                     traits=creature.traits,
                     x=creature.x,
-                    y=creature.y
+                    y=creature.y,
+                    player_id=creature.player_id
                 )
                 # Transfer memory
                 new_creature.memory = creature.memory

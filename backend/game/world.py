@@ -176,9 +176,11 @@ class World:
 
             action = actions.get(creature.id)
             if not action:
+                print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} has no action")
                 continue
 
             action_type = action.get('action')
+            print(f"[DEBUG] Turn {self.turn}: Executing action for Creature {creature.id} (Player {creature.player_id}): {action_type} - {action}")
             
             # Get position (centroid for multicellular)
             if hasattr(creature, 'get_position'):
@@ -200,16 +202,20 @@ class World:
                 )
 
                 if not collision:
+                    old_x, old_y = creature.x, creature.y
                     creature.x = new_x
                     creature.y = new_y
                     creature.energy -= 1  # Movement cost
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
                     events.append(f"{stage_name} {creature.id} moved to ({new_x}, {new_y})")
+                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} moved from ({old_x}, {old_y}) to ({new_x}, {new_y})")
                     detailed_events.append({
                         'creature_id': creature.id,
                         'type': 'move',
                         'location': (new_x, new_y)
                     })
+                else:
+                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} movement blocked by collision at ({new_x}, {new_y})")
 
             elif action_type == 'eat':
                 target_id = action.get('target_id')
@@ -254,6 +260,13 @@ class World:
                 })
 
             elif action_type == 'reproduce':
+                # Limit to 1 creature per player (for testing)
+                if creature.player_id is not None:
+                    player_creature_count = sum(1 for c in self.cells if c.alive and c.player_id == creature.player_id)
+                    if player_creature_count >= 1:
+                        # Already has 1 creature, prevent reproduction
+                        continue
+                
                 if creature.energy > 50:
                     # Create new creature of same type nearby
                     directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
@@ -270,7 +283,8 @@ class World:
                                     creature_id=self._resource_id_counter,
                                     traits=creature.traits,
                                     x=new_x,
-                                    y=new_y
+                                    y=new_y,
+                                    player_id=creature.player_id
                                 )
                             elif creature.stage == 2:
                                 from .multicellular import Multicellular
@@ -278,7 +292,8 @@ class World:
                                     creature_id=self._resource_id_counter,
                                     traits=creature.traits,
                                     x=new_x,
-                                    y=new_y
+                                    y=new_y,
+                                    player_id=creature.player_id
                                 )
                             else:  # stage 3
                                 from .organism import Organism
@@ -286,7 +301,8 @@ class World:
                                     creature_id=self._resource_id_counter,
                                     traits=creature.traits,
                                     x=new_x,
-                                    y=new_y
+                                    y=new_y,
+                                    player_id=creature.player_id
                                 )
                             
                             new_creature.energy = 50

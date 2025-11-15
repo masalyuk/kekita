@@ -43,8 +43,10 @@ class LLMResponseParser:
             return {'action': 'reproduce'}
 
         else:
-            # Fallback: stay (no movement)
-            return {'action': 'move', 'direction': (0, 0)}
+            # Fallback: random movement
+            import random
+            directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+            return {'action': 'move', 'direction': random.choice(directions)}
 
     @staticmethod
     def extract_direction(response: str) -> tuple:
@@ -67,6 +69,8 @@ class LLMResponseParser:
         elif 'RIGHT' in response:
             return (1, 0)
         else:
-            # Default: no movement
-            return (0, 0)
+            # Default: random direction if no direction specified
+            import random
+            directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+            return random.choice(directions)
 

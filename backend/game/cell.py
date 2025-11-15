@@ -6,7 +6,7 @@ from .creature import Creature
 class Cell(Creature):
     """A primitive single-celled organism (Stage 1)."""
 
-    def __init__(self, creature_id, traits, x, y):
+    def __init__(self, creature_id, traits, x, y, player_id=None):
         """
         Initialize a cell creature.
         
@@ -15,8 +15,9 @@ class Cell(Creature):
             traits: Dict with color, speed, diet, etc.
             x: Initial x position
             y: Initial y position
+            player_id: Player ID (1 or 2) that owns this creature
         """
-        super().__init__(creature_id, traits, x, y, stage=1)
+        super().__init__(creature_id, traits, x, y, stage=1, player_id=player_id)
 
     def to_dict(self):
         """Serialize cell state for frontend."""
@@ -30,6 +31,7 @@ class Cell(Creature):
             'diet': self.diet,
             'age': self.age,
             'alive': self.alive,
-            'stage': self.stage
+            'stage': self.stage,
+            'player_id': self.player_id
         }
 

@@ -7,7 +7,7 @@ from .creature_memory import CreatureMemory
 class Creature(ABC):
     """Base class for all creatures across evolution stages."""
     
-    def __init__(self, creature_id, traits, x, y, stage=1):
+    def __init__(self, creature_id, traits, x, y, stage=1, player_id=None):
         """
         Initialize a creature.
         
@@ -17,8 +17,10 @@ class Creature(ABC):
             x: Initial x position
             y: Initial y position
             stage: Evolution stage (1, 2, or 3)
+            player_id: Player ID (1 or 2) that owns this creature
         """
         self.id = creature_id
+        self.player_id = player_id
         self.color = traits.get('color', 'blue')
         self.speed = traits.get('speed', 3)
         self.diet = traits.get('diet', 'omnivore')
