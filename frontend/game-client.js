@@ -1,5 +1,22 @@
 // GameClient class for WebSocket connection and Canvas rendering with Stage-Based Flow
 
+// Polyfill for roundRect if not available
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+        this.beginPath();
+        this.moveTo(x + radius, y);
+        this.lineTo(x + width - radius, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + radius);
+        this.lineTo(x + width, y + height - radius);
+        this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        this.lineTo(x + radius, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - radius);
+        this.lineTo(x, y + radius);
+        this.quadraticCurveTo(x, y, x + radius, y);
+        this.closePath();
+    };
+}
+
 class GameClient {
     constructor(canvasElement) {
         this.canvas = canvasElement;
@@ -231,36 +248,36 @@ class GameClient {
         let energyEventsHtml = '';
         if (energyEvents.length > 0) {
             energyEventsHtml = `
-                <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
-                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #856404;">Energy Events (This Attempt):</p>
-                    <ul style="margin: 0; padding-left: 20px; color: #333;">
-                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: monospace;">${event}</li>`).join('')}
+                <div style="margin: 20px 0; padding: 16px; background: rgba(246, 224, 94, 0.15); border-radius: 12px; border-left: 4px solid #f6e05e;">
+                    <p style="margin: 0 0 10px 0; font-weight: 700; color: #1a1a2e;">Energy Events (This Attempt):</p>
+                    <ul style="margin: 0; padding-left: 20px; color: #1a1a2e;">
+                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: 'Inter', monospace; font-size: 13px;">${event}</li>`).join('')}
                     </ul>
-                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #666; font-style: italic;">Use this information to update your prompt and improve survival strategies.</p>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #1a1a2e; font-style: italic;">Use this information to update your prompt and improve survival strategies.</p>
                 </div>
             `;
         } else {
             energyEventsHtml = `
-                <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #999;">
-                    <p style="margin: 0; color: #666; font-style: italic;">No energy events recorded this attempt.</p>
+                <div style="margin: 20px 0; padding: 16px; background: rgba(102, 126, 234, 0.05); border-radius: 12px; border-left: 4px solid rgba(102, 126, 234, 0.3);">
+                    <p style="margin: 0; color: #1a1a2e; font-style: italic;">No energy events recorded this attempt.</p>
                 </div>
             `;
         }
         
         content.innerHTML = `
-            <h2>Population Extinct!</h2>
-            <p style="color: #F44336; font-size: 18px; font-weight: bold;">All creatures have died.</p>
-            <div style="margin: 20px 0;">
-                <p><strong>Attempt:</strong> ${update.attempt_number || this.attemptNumber} / ${update.max_attempts || this.maxAttempts}</p>
-                <p><strong>Attempts Remaining:</strong> ${update.attempts_remaining || (this.maxAttempts - this.attemptNumber)}</p>
-                <p><strong>Turn:</strong> ${update.turn || 0}</p>
+            <h2 style="color: #1a1a2e; font-weight: 800; margin-top: 0;">Population Extinct!</h2>
+            <p style="color: #f56565; font-size: 18px; font-weight: 700; margin: 10px 0;">All creatures have died.</p>
+            <div style="margin: 20px 0; padding: 16px; background: rgba(102, 126, 234, 0.05); border-radius: 12px; border: 1px solid rgba(102, 126, 234, 0.15);">
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Attempt:</strong> <span style="color: #667eea; font-weight: 600;">${update.attempt_number || this.attemptNumber} / ${update.max_attempts || this.maxAttempts}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Attempts Remaining:</strong> <span style="color: #667eea; font-weight: 600;">${update.attempts_remaining || (this.maxAttempts - this.attemptNumber)}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Turn:</strong> <span style="color: #667eea; font-weight: 600;">${update.turn || 0}</span></p>
             </div>
             ${energyEventsHtml}
-            <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #2196F3;">
-                <p style="margin: 0 0 8px 0; font-weight: bold; color: #555;">Current Prompt:</p>
-                <p style="margin: 0; color: #333; font-style: italic; word-wrap: break-word;">"${currentPrompt}"</p>
+            <div style="margin: 20px 0; padding: 16px; background: rgba(102, 126, 234, 0.05); border-radius: 12px; border-left: 4px solid #667eea;">
+                <p style="margin: 0 0 8px 0; font-weight: 700; color: #1a1a2e;">Current Prompt:</p>
+                <p style="margin: 0; color: #1a1a2e; font-style: italic; word-wrap: break-word;">"${currentPrompt}"</p>
             </div>
-            <p style="color: #666;">Update your creatures' behavior to help them survive in the next attempt!</p>
+            <p style="color: #1a1a2e; font-weight: 500;">Update your creatures' behavior to help them survive in the next attempt!</p>
         `;
         
         // Show prompt input section
@@ -320,33 +337,33 @@ class GameClient {
         let energyEventsHtml = '';
         if (energyEvents && energyEvents.length > 0) {
             energyEventsHtml = `
-                <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
-                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #856404;">Energy Events (Final Attempt):</p>
-                    <ul style="margin: 0; padding-left: 20px; color: #333;">
-                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: monospace;">${event}</li>`).join('')}
+                <div style="margin: 20px 0; padding: 16px; background: rgba(246, 224, 94, 0.15); border-radius: 12px; border-left: 4px solid #f6e05e;">
+                    <p style="margin: 0 0 10px 0; font-weight: 700; color: #1a1a2e;">Energy Events (Final Attempt):</p>
+                    <ul style="margin: 0; padding-left: 20px; color: #1a1a2e;">
+                        ${energyEvents.map(event => `<li style="margin: 5px 0; font-family: 'Inter', monospace; font-size: 13px;">${event}</li>`).join('')}
                     </ul>
                 </div>
             `;
         }
         
         content.innerHTML = `
-            <h2>Final Results - Game Complete!</h2>
+            <h2 style="color: #1a1a2e; font-weight: 800; margin-top: 0;">Final Results - Game Complete!</h2>
             <div class="player-results">
                 <h3>Your Creature</h3>
-                <p><strong>Final Energy:</strong> ${player.energy}</p>
-                <p><strong>Final Stage:</strong> ${player.stage}</p>
-                <p><strong>Survived:</strong> ${survived ? 'Yes' : 'No'}</p>
-                <p><strong>Age:</strong> ${player.age}</p>
-                <p><strong>Color:</strong> ${player.color}</p>
-                <p><strong>Speed:</strong> ${player.speed}</p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Final Energy:</strong> <span style="color: #667eea; font-weight: 600;">${player.energy}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Final Stage:</strong> <span style="color: #667eea; font-weight: 600;">${player.stage}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Survived:</strong> <span style="color: ${survived ? '#48bb78' : '#f56565'}; font-weight: 600;">${survived ? 'Yes' : 'No'}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Age:</strong> <span style="color: #667eea; font-weight: 600;">${player.age}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Color:</strong> <span style="color: #667eea; font-weight: 600;">${player.color}</span></p>
+                <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Speed:</strong> <span style="color: #667eea; font-weight: 600;">${player.speed}</span></p>
             </div>
             ${energyEventsHtml}
-            <div style="margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; border-left: 4px solid #2196F3;">
-                <p style="margin: 0 0 8px 0; font-weight: bold; color: #555;">Final Prompt:</p>
-                <p style="margin: 0; color: #333; font-style: italic; word-wrap: break-word;">"${prompt}"</p>
+            <div style="margin: 20px 0; padding: 16px; background: rgba(102, 126, 234, 0.05); border-radius: 12px; border-left: 4px solid #667eea;">
+                <p style="margin: 0 0 8px 0; font-weight: 700; color: #1a1a2e;">Final Prompt:</p>
+                <p style="margin: 0; color: #1a1a2e; font-style: italic; word-wrap: break-word;">"${prompt}"</p>
             </div>
             ${survived ? `<p class="winner">🏆 You survived!</p>` : '<p class="winner">Your creature did not survive.</p>'}
-            <button onclick="document.getElementById('resultsModal').style.display='none'">Close</button>
+            <button onclick="document.getElementById('resultsModal').style.display='none'" style="padding: 12px 24px; font-size: 14px; font-weight: 600; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; margin-top: 20px; width: 100%; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">Close</button>
         `;
         
         // Hide prompt input section for final results
@@ -365,8 +382,11 @@ class GameClient {
     render() {
         if (!this.gameState || !this.gameState.world) return;
 
-        // Clear canvas
-        this.ctx.fillStyle = '#E8E8E8';
+        // Clear canvas with gradient background
+        const gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, this.canvas.height);
+        gradient.addColorStop(0, '#f5f7fa');
+        gradient.addColorStop(1, '#c3cfe2');
+        this.ctx.fillStyle = gradient;
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
         // Draw grid
@@ -388,7 +408,7 @@ class GameClient {
 
     drawGrid() {
         const cellSize = this.cellSize;
-        this.ctx.strokeStyle = '#CCCCCC';
+        this.ctx.strokeStyle = 'rgba(102, 126, 234, 0.15)';
         this.ctx.lineWidth = 0.5;
 
         const gridWidth = Math.floor(this.canvas.width / cellSize);
@@ -417,8 +437,16 @@ class GameClient {
         if (creature.sprite_url) {
             const sprite = this.spriteCache[creature.sprite_url];
             if (sprite && sprite.complete && sprite.naturalWidth > 0) {
-                // Sprite loaded successfully, draw it
-                const spriteSize = 32; // Size to draw sprite on canvas
+                // Sprite loaded successfully, draw it with shadow
+                const spriteSize = 32;
+                
+                // Draw shadow
+                this.ctx.save();
+                this.ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+                this.ctx.shadowBlur = 8;
+                this.ctx.shadowOffsetX = 2;
+                this.ctx.shadowOffsetY = 2;
+                
                 this.ctx.drawImage(
                     sprite,
                     x - spriteSize / 2,
@@ -426,6 +454,7 @@ class GameClient {
                     spriteSize,
                     spriteSize
                 );
+                this.ctx.restore();
                 
                 // Draw energy indicator on top
                 this.drawEnergyBar(x, y, creature.energy);
@@ -434,11 +463,10 @@ class GameClient {
                 // Sprite not in cache or still loading, start loading it
                 if (!sprite) {
                     const img = new Image();
-                    img.crossOrigin = 'anonymous'; // Allow CORS if needed
+                    img.crossOrigin = 'anonymous';
                     img.onload = () => {
                         console.log(`✓ Sprite loaded: ${creature.sprite_url}`);
                         this.spriteCache[creature.sprite_url] = img;
-                        // Trigger redraw
                         if (this.animationFrame) {
                             cancelAnimationFrame(this.animationFrame);
                         }
@@ -446,81 +474,79 @@ class GameClient {
                     };
                     img.onerror = (e) => {
                         console.warn(`✗ Failed to load sprite: ${creature.sprite_url}`, e);
-                        // Mark as failed to avoid retrying
                         this.spriteCache[creature.sprite_url] = null;
                     };
                     const fullUrl = `http://localhost:8000${creature.sprite_url}`;
                     console.log(`Loading sprite: ${fullUrl}`);
                     img.src = fullUrl;
-                    this.spriteCache[creature.sprite_url] = img; // Store reference while loading
+                    this.spriteCache[creature.sprite_url] = img;
                 }
             }
-            // If sprite is loading or failed, fall through to canvas drawing
-        } else {
-            // Debug: log when sprite_url is missing
-            if (creature.id === 1 || creature.id === 2) {
-                console.log(`Creature ${creature.id} has no sprite_url, using canvas drawing`);
-            }
         }
 
-        // Fallback to canvas drawing (original implementation)
+        // Fallback to canvas drawing with modern styling
         const colorMap = {
-            'blue': '#2196F3',
-            'red': '#F44336',
-            'green': '#4CAF50',
-            'yellow': '#FFEB3B',
-            'purple': '#9C27B0',
-            'orange': '#FF9800',
-            'pink': '#E91E63',
-            'cyan': '#00BCD4',
-            'brown': '#795548',
-            'black': '#212121',
-            'white': '#FFFFFF'
+            'blue': '#667eea',
+            'red': '#f56565',
+            'green': '#48bb78',
+            'yellow': '#f6e05e',
+            'purple': '#9f7aea',
+            'orange': '#ed8936',
+            'pink': '#ed64a6',
+            'cyan': '#38b2ac',
+            'brown': '#a0aec0',
+            'black': '#2d3748',
+            'white': '#ffffff'
         };
 
-        // Normalize color to lowercase string for matching
         const creatureColor = creature.color ? String(creature.color).toLowerCase().trim() : null;
-        
-        // Debug logging (can be removed later)
-        if (!creatureColor || !colorMap[creatureColor]) {
-            console.warn(`Creature ${creature.id} has invalid or missing color:`, creature.color, '-> using default blue');
-        }
-        
-        // Get color from map, or use creatureColor if it's already a hex code, or default to blue
-        const fillColor = colorMap[creatureColor] || (creatureColor && creatureColor.startsWith('#') ? creatureColor : '#2196F3');
+        const fillColor = colorMap[creatureColor] || (creatureColor && creatureColor.startsWith('#') ? creatureColor : '#667eea');
         const stage = creature.stage || 1;
         
-        this.ctx.fillStyle = fillColor;
+        // Create gradient for creature
+        const gradient = this.ctx.createRadialGradient(x - 3, y - 3, 0, x, y, 20);
+        gradient.addColorStop(0, this.lightenColor(fillColor, 20));
+        gradient.addColorStop(1, fillColor);
+        
+        this.ctx.save();
+        
+        // Draw shadow
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        this.ctx.shadowBlur = 8;
+        this.ctx.shadowOffsetX = 2;
+        this.ctx.shadowOffsetY = 2;
+        
+        this.ctx.fillStyle = gradient;
         this.ctx.beginPath();
         
         // Different shapes for different stages
         if (stage === 1) {
-            this.ctx.arc(x, y, 10, 0, Math.PI * 2);
+            this.ctx.arc(x, y, 12, 0, Math.PI * 2);
         } else if (stage === 2) {
             const colonySize = creature.colony_size || 1;
-            const radius = 12 + (colonySize * 2);
+            const radius = 14 + (colonySize * 2);
             this.ctx.arc(x, y, radius, 0, Math.PI * 2);
             for (let i = 0; i < Math.min(colonySize, 5); i++) {
                 const angle = (i * Math.PI * 2) / Math.min(colonySize, 5);
                 const offsetX = Math.cos(angle) * (radius * 0.6);
                 const offsetY = Math.sin(angle) * (radius * 0.6);
                 this.ctx.beginPath();
-                this.ctx.arc(x + offsetX, y + offsetY, 4, 0, Math.PI * 2);
+                this.ctx.arc(x + offsetX, y + offsetY, 5, 0, Math.PI * 2);
                 this.ctx.fill();
             }
         } else if (stage === 3) {
             const limbs = creature.parts?.limbs || 4;
-            const radius = 15;
+            const radius = 16;
             this.ctx.arc(x, y, radius, 0, Math.PI * 2);
             this.ctx.fill();
-            this.ctx.strokeStyle = fillColor;
-            this.ctx.lineWidth = 2;
+            this.ctx.strokeStyle = this.lightenColor(fillColor, 10);
+            this.ctx.lineWidth = 2.5;
             for (let i = 0; i < limbs; i++) {
                 const angle = (i * Math.PI * 2) / limbs;
                 const startX = x + Math.cos(angle) * radius;
                 const startY = y + Math.sin(angle) * radius;
-                const endX = x + Math.cos(angle) * (radius + 8);
-                const endY = y + Math.sin(angle) * (radius + 8);
+                const endX = x + Math.cos(angle) * (radius + 10);
+                const endY = y + Math.sin(angle) * (radius + 10);
                 this.ctx.beginPath();
                 this.ctx.moveTo(startX, startY);
                 this.ctx.lineTo(endX, endY);
@@ -529,75 +555,169 @@ class GameClient {
         }
         
         this.ctx.fill();
-        this.ctx.strokeStyle = '#333';
-        this.ctx.lineWidth = stage === 3 ? 2 : 1;
+        
+        // Draw border
+        this.ctx.shadowBlur = 0;
+        this.ctx.strokeStyle = this.darkenColor(fillColor, 15);
+        this.ctx.lineWidth = stage === 3 ? 2.5 : 1.5;
         this.ctx.stroke();
+        
+        this.ctx.restore();
 
         // Draw energy indicator
         this.drawEnergyBar(x, y, creature.energy);
     }
+    
+    lightenColor(color, percent) {
+        const num = parseInt(color.replace("#",""), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.min(255, (num >> 16) + amt);
+        const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
+        const B = Math.min(255, (num & 0x0000FF) + amt);
+        return "#" + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+    }
+    
+    darkenColor(color, percent) {
+        const num = parseInt(color.replace("#",""), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.max(0, (num >> 16) - amt);
+        const G = Math.max(0, ((num >> 8) & 0x00FF) - amt);
+        const B = Math.max(0, (num & 0x0000FF) - amt);
+        return "#" + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+    }
 
     drawEnergyBar(x, y, energy) {
-        const energyPercent = energy / 100;
-        const barWidth = 16;
-        const barHeight = 3;
+        const energyPercent = Math.max(0, Math.min(1, energy / 100));
+        const barWidth = 20;
+        const barHeight = 4;
         const barX = x - barWidth / 2;
-        const barY = y - 18;
+        const barY = y - 22;
+        const borderRadius = 2;
 
-        this.ctx.fillStyle = '#333';
-        this.ctx.fillRect(barX, barY, barWidth, barHeight);
-        this.ctx.fillStyle = energyPercent > 0.5 ? '#4CAF50' : (energyPercent > 0.25 ? '#FFC107' : '#F44336');
-        this.ctx.fillRect(barX, barY, barWidth * energyPercent, barHeight);
+        // Draw background
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX, barY, barWidth, barHeight, borderRadius);
+        this.ctx.fill();
+
+        // Draw energy bar with gradient
+        const energyColor = energyPercent > 0.5 ? '#48bb78' : (energyPercent > 0.25 ? '#f6e05e' : '#f56565');
+        const gradient = this.ctx.createLinearGradient(barX, barY, barX + barWidth * energyPercent, barY);
+        gradient.addColorStop(0, this.lightenColor(energyColor, 15));
+        gradient.addColorStop(1, energyColor);
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX, barY, barWidth * energyPercent, barHeight, borderRadius);
+        this.ctx.fill();
+        
+        // Draw border
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.lineWidth = 0.5;
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX, barY, barWidth, barHeight, borderRadius);
+        this.ctx.stroke();
     }
 
     drawFood(food) {
         const x = food.x * this.cellSize + this.cellSize / 2;
         const y = food.y * this.cellSize + this.cellSize / 2;
         
-        // Get food type, default to apple if not specified
         const foodType = food.type || 'apple';
         
-        // Save context state
         this.ctx.save();
         
-        // Draw colored shapes based on food type (more reliable than emojis)
-        this.ctx.fillStyle = foodType === 'apple' ? '#FF4444' : 
-                             (foodType === 'banana' ? '#FFEB3B' : '#9C27B0');
+        // Draw shadow
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+        this.ctx.shadowBlur = 4;
+        this.ctx.shadowOffsetX = 1;
+        this.ctx.shadowOffsetY = 1;
         
         if (foodType === 'apple') {
-            // Red circle for apple
+            // Apple with gradient
+            const appleGradient = this.ctx.createRadialGradient(x - 2, y - 2, 0, x, y, 12);
+            appleGradient.addColorStop(0, '#ff6b6b');
+            appleGradient.addColorStop(1, '#ee5a52');
+            this.ctx.fillStyle = appleGradient;
             this.ctx.beginPath();
-            this.ctx.arc(x, y, 10, 0, Math.PI * 2);
+            this.ctx.arc(x, y, 11, 0, Math.PI * 2);
             this.ctx.fill();
-            // Add a small green stem
-            this.ctx.fillStyle = '#4CAF50';
-            this.ctx.fillRect(x - 2, y - 12, 4, 4);
-        } else if (foodType === 'banana') {
-            // Yellow curved shape for banana
+            
+            // Stem
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = '#48bb78';
+            this.ctx.fillRect(x - 2, y - 13, 4, 5);
+            
+            // Highlight
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
             this.ctx.beginPath();
-            this.ctx.ellipse(x, y, 8, 12, -0.3, 0, Math.PI * 2);
+            this.ctx.arc(x - 3, y - 3, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+        } else if (foodType === 'banana') {
+            // Banana with gradient
+            const bananaGradient = this.ctx.createLinearGradient(x - 8, y - 12, x + 8, y + 12);
+            bananaGradient.addColorStop(0, '#f6e05e');
+            bananaGradient.addColorStop(1, '#ecc94b');
+            this.ctx.fillStyle = bananaGradient;
+            this.ctx.beginPath();
+            this.ctx.ellipse(x, y, 9, 13, -0.3, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Highlight
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            this.ctx.beginPath();
+            this.ctx.ellipse(x - 2, y - 4, 3, 5, -0.3, 0, Math.PI * 2);
             this.ctx.fill();
         } else if (foodType === 'grapes') {
-            // Purple circles for grapes
-            this.ctx.fillStyle = '#9C27B0';
-            for (let i = 0; i < 3; i++) {
-                for (let j = 0; j < 2; j++) {
-                    this.ctx.beginPath();
-                    this.ctx.arc(x - 6 + i * 6, y - 4 + j * 8, 4, 0, Math.PI * 2);
-                    this.ctx.fill();
-                }
-            }
+            // Grapes cluster
+            this.ctx.fillStyle = '#9f7aea';
+            const positions = [
+                [x - 5, y - 5], [x, y - 6], [x + 5, y - 5],
+                [x - 6, y + 2], [x, y + 1], [x + 6, y + 2]
+            ];
+            positions.forEach(([px, py], i) => {
+                const grapeGradient = this.ctx.createRadialGradient(px - 1, py - 1, 0, px, py, 5);
+                grapeGradient.addColorStop(0, '#b794f4');
+                grapeGradient.addColorStop(1, '#9f7aea');
+                this.ctx.fillStyle = grapeGradient;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, 5, 0, Math.PI * 2);
+                this.ctx.fill();
+            });
         }
         
-        // Restore context state
         this.ctx.restore();
     }
 
     drawUI(turn) {
-        this.ctx.fillStyle = 'black';
-        this.ctx.font = '14px sans-serif';
+        // Draw turn counter with modern styling
+        this.ctx.save();
+        
+        // Background for text
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        this.ctx.beginPath();
+        this.ctx.roundRect(8, 8, 100, 28, 8);
+        this.ctx.fill();
+        
+        // Border
+        this.ctx.strokeStyle = 'rgba(102, 126, 234, 0.3)';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.beginPath();
+        this.ctx.roundRect(8, 8, 100, 28, 8);
+        this.ctx.stroke();
+        
+        // Text with shadow
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+        this.ctx.shadowBlur = 2;
+        this.ctx.shadowOffsetX = 1;
+        this.ctx.shadowOffsetY = 1;
+        this.ctx.fillStyle = '#1a1a2e';
+        this.ctx.font = 'bold 14px Inter, sans-serif';
         this.ctx.textAlign = 'left';
-        this.ctx.fillText(`Turn: ${turn}`, 10, 20);
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(`Turn: ${turn}`, 18, 22);
+        
+        this.ctx.restore();
     }
 
     updateEvents(events) {
