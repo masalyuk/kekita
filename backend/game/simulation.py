@@ -56,12 +56,18 @@ class Simulation:
         print(f"[DEBUG] Total creatures: {len(self.world.cells)}, Alive: {sum(1 for c in self.world.cells if c.alive)}")
         
         # Separate creatures into critical (rule-based) and normal (can batch LLM)
+        # Skip predators (player_id is None) - they have their own AI in environment._update_predators()
         critical_creatures = []
         normal_creatures = []
         
         for cell in self.world.cells:
             if not cell.alive:
                 print(f"[DEBUG] Turn {self.world.turn}: Cell {cell.id} is dead, skipping")
+                continue
+
+            # Skip predators - they have their own AI
+            if cell.player_id is None:
+                print(f"[DEBUG] Turn {self.world.turn}: Cell {cell.id} is a predator (NPC), skipping decision-making")
                 continue
 
             # Get nearby objects
@@ -135,8 +141,12 @@ class Simulation:
         creatures_data = [c.to_dict() for c in self.world.cells if c.alive]
         # Debug: log creature colors and sprite URLs being sent
         if creatures_data:
-            colors_info = ', '.join([f"Creature {c['id']}: color={c.get('color', 'MISSING')}, sprite_url={c.get('sprite_url', 'None')}" for c in creatures_data])
-            print(f"[simulation.step] Sending creatures: {colors_info}")
+            colors_info = ', '.join([f"Creature {c['id']}: color={c.get('color', 'MISSING')}, sprite_url={c.get('sprite_url', 'None')}, player_id={c.get('player_id', 'None')}" for c in creatures_data])
+            print(f"[simulation.step] Sending {len(creatures_data)} creatures to frontend: {colors_info}")
+            # Count predators
+            predators = [c for c in creatures_data if c.get('player_id') is None]
+            if predators:
+                print(f"[simulation.step] ✓ Including {len(predators)} predator(s) in creatures data: {[c['id'] for c in predators]}")
         
         # Get environment data
         environment_data = {

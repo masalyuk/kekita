@@ -486,41 +486,143 @@ class GameClient {
             this.updateStatus(`Stage ${update.stage} started!`);
             this.updateStageTimer(update.time_remaining);
         } else if (update.status === 'update') {
-            // Check if this is a new attempt (attempt number changed)
-            const previousAttemptNumber = this.attemptNumber;
-            this.gameState = update;
-            this.currentStage = update.stage || this.currentStage;
-            this.timeRemaining = update.time_remaining || this.timeRemaining;
-            if (update.attempt_number) {
+            // COMPLETELY NEW APPROACH: Deep merge with preservation of existing state
+            // Never clear anything - only update what's explicitly provided and valid
+            
+            // Initialize gameState if needed
+            if (!this.gameState) {
+                this.gameState = {
+                    world: {},
+                    environment: null,
+                    turn: 0,
+                    stage: 1,
+                    events: []
+                };
+            }
+            
+            // Ensure world object exists
+            if (!this.gameState.world) {
+                this.gameState.world = {
+                    creatures: [],
+                    resources: { food: [] },
+                    territories: {},
+                    disasters: [],
+                    regions: {}
+                };
+            }
+            
+            // Deep clone current state as backup
+            const backupState = JSON.parse(JSON.stringify(this.gameState));
+            
+            // Update turn - always use provided value if valid
+            if (typeof update.turn === 'number' && update.turn >= 0) {
+                this.gameState.turn = update.turn;
+            }
+            
+            // Update stage - always use provided value if valid
+            if (typeof update.stage === 'number' && update.stage > 0) {
+                this.gameState.stage = update.stage;
+                this.currentStage = update.stage;
+            }
+            
+            // Update events
+            if (Array.isArray(update.events)) {
+                this.gameState.events = update.events;
+            }
+            
+            // Update other top-level properties
+            if (update.time_remaining !== undefined) {
+                this.timeRemaining = update.time_remaining;
+            }
+            if (update.attempt_number !== undefined) {
                 this.attemptNumber = update.attempt_number;
             }
-            if (update.max_attempts) {
+            if (update.max_attempts !== undefined) {
                 this.maxAttempts = update.max_attempts;
             }
-            // Clear hovered element when a new attempt starts
-            if (update.attempt_number && update.attempt_number !== previousAttemptNumber) {
-                this.hoveredElement = null;
+            if (update.attempts_remaining !== undefined) {
+                this.updateHearts(update.attempts_remaining);
             }
-            this.updateHearts(update.attempts_remaining || (this.maxAttempts - this.attemptNumber + 1));
             
-            // Add environment and territories to game state if available
-            if (update.environment) {
+            // Update world.creatures - always use provided array if it exists
+            if (update.world && Array.isArray(update.world.creatures)) {
+                this.gameState.world.creatures = update.world.creatures;
+                
+                // Debug: log all creatures and identify user creatures
+                const userCreatures = update.world.creatures.filter(c => c.player_id !== null && c.player_id !== undefined);
+                const predators = update.world.creatures.filter(c => c.player_id === null || c.player_id === undefined);
+                
+                console.log(`[onGameUpdate] Received ${update.world.creatures.length} total creatures:`, {
+                    userCreatures: userCreatures.length,
+                    predators: predators.length,
+                    userCreatureDetails: userCreatures.map(c => ({
+                        id: c.id,
+                        player_id: c.player_id,
+                        x: c.x,
+                        y: c.y,
+                        color: c.color,
+                        sprite_url: c.sprite_url || 'none',
+                        alive: c.alive
+                    })),
+                    predatorDetails: predators.length > 0 ? predators.map(p => ({id: p.id, x: p.x, y: p.y})) : []
+                });
+                
+                if (userCreatures.length === 0) {
+                    console.warn(`[onGameUpdate] ⚠️ WARNING: No user creatures found in update! Total creatures: ${update.world.creatures.length}`);
+                }
+            }
+            
+            // Update world.resources - merge food array if provided
+            if (update.world && update.world.resources) {
+                if (!this.gameState.world.resources) {
+                    this.gameState.world.resources = {};
+                }
+                // Only update food if it's an array
+                if (Array.isArray(update.world.resources.food)) {
+                    this.gameState.world.resources.food = update.world.resources.food;
+                }
+            }
+            
+            // Update environment - only if valid object with keys
+            if (update.environment && typeof update.environment === 'object' && Object.keys(update.environment).length > 0) {
                 this.gameState.environment = update.environment;
-                if (!this.gameState.world) this.gameState.world = {};
                 this.gameState.world.environment = update.environment;
             }
-            if (update.territories) {
-                if (!this.gameState.world) this.gameState.world = {};
+            // If no environment in update, ensure we preserve existing
+            else if (!this.gameState.environment && this.gameState.world.environment) {
+                this.gameState.environment = this.gameState.world.environment;
+            } else if (this.gameState.environment && !this.gameState.world.environment) {
+                this.gameState.world.environment = this.gameState.environment;
+            }
+            
+            // Update territories, disasters, regions - only if valid
+            if (update.territories && typeof update.territories === 'object') {
                 this.gameState.world.territories = update.territories;
             }
-            if (update.disasters) {
-                if (!this.gameState.world) this.gameState.world = {};
+            if (Array.isArray(update.disasters)) {
                 this.gameState.world.disasters = update.disasters;
             }
-            if (update.regions) {
-                if (!this.gameState.world) this.gameState.world = {};
+            if (update.regions && typeof update.regions === 'object') {
                 this.gameState.world.regions = update.regions;
             }
+            
+            // Safety check: if critical data is missing, restore from backup
+            if (!this.gameState.world.creatures || !Array.isArray(this.gameState.world.creatures)) {
+                console.warn('[Frontend] Invalid creatures data, restoring from backup');
+                this.gameState.world.creatures = backupState.world?.creatures || [];
+            }
+            if (!this.gameState.world.resources || !this.gameState.world.resources.food || !Array.isArray(this.gameState.world.resources.food)) {
+                console.warn('[Frontend] Invalid resources data, restoring from backup');
+                this.gameState.world.resources = backupState.world?.resources || { food: [] };
+            }
+            if (!this.gameState.environment && !this.gameState.world.environment) {
+                console.warn('[Frontend] Missing environment data, restoring from backup');
+                this.gameState.environment = backupState.environment;
+                this.gameState.world.environment = backupState.world?.environment;
+            }
+            
+            // Update UI elements outside canvas (turn, day/night, weather)
+            this.updateGameInfoUI();
             
             this.render();
             this.updateEvents(update.events || []);
@@ -778,13 +880,20 @@ class GameClient {
         }
 
         // Draw resources
-        if (this.gameState.world.resources) {
+        if (this.gameState.world.resources && this.gameState.world.resources.food && Array.isArray(this.gameState.world.resources.food)) {
             this.gameState.world.resources.food.forEach(food => this.drawFood(food));
         }
 
         // Draw creatures
         if (this.gameState.world.creatures) {
+            const userCreatures = this.gameState.world.creatures.filter(c => c.player_id !== null && c.player_id !== undefined);
+            const predators = this.gameState.world.creatures.filter(c => c.player_id === null || c.player_id === undefined);
+            
+            console.log(`[render] Drawing ${this.gameState.world.creatures.length} creatures: ${userCreatures.length} user, ${predators.length} predators`);
+            
             this.gameState.world.creatures.forEach(creature => this.drawCreature(creature));
+        } else {
+            console.warn(`[render] ⚠️ No creatures array in gameState.world`);
         }
 
         // Draw weather effects
@@ -793,8 +902,8 @@ class GameClient {
             this.drawWeather(weather);
         }
 
-        // Draw UI
-        this.drawUI(this.gameState.turn || 0);
+        // Update UI elements outside canvas (turn, day/night, weather)
+        this.updateGameInfoUI();
         
         // Draw hover highlight and tooltip
         if (this.hoveredElement) {
@@ -1297,8 +1406,13 @@ class GameClient {
 
         // Check if this is an NPC predator (player_id is null)
         const isPredator = creature.player_id === null || creature.player_id === undefined;
+        
+        // Debug logging for user creatures
+        if (!isPredator) {
+            console.log(`[drawCreature] Rendering user creature ${creature.id} at (${x}, ${y}), player_id=${creature.player_id}, sprite_url=${creature.sprite_url || 'none'}`);
+        }
 
-        // Try to use sprite if available
+        // Try to use sprite if available and loaded
         if (creature.sprite_url && !isPredator) {
             const sprite = this.spriteCache[creature.sprite_url];
             if (sprite && sprite.complete && sprite.naturalWidth > 0) {
@@ -1320,9 +1434,13 @@ class GameClient {
                 
                 // Draw energy indicator on top
                 this.drawEnergyBar(x, y, creature.energy);
-                return;
-            } else if (!sprite || (sprite && !sprite.complete)) {
-                // Sprite not in cache or still loading, start loading it
+                
+                // Note: Predator indicator, combat indicator, and custom actions are rendered
+                // after the fallback section below, so they apply to both sprites and pixel art
+                
+                return; // Sprite rendered successfully, exit early
+            } else {
+                // Sprite not ready yet, but start loading it in background
                 if (!sprite) {
                     const img = new Image();
                     img.crossOrigin = 'anonymous';
@@ -1337,16 +1455,23 @@ class GameClient {
                     img.onerror = (e) => {
                         console.warn(`✗ Failed to load sprite: ${creature.sprite_url}`, e);
                         this.spriteCache[creature.sprite_url] = null;
+                        // Trigger re-render to show fallback
+                        if (this.animationFrame) {
+                            cancelAnimationFrame(this.animationFrame);
+                        }
+                        this.animationFrame = requestAnimationFrame(() => this.render());
                     };
                     const fullUrl = `http://localhost:8000${creature.sprite_url}`;
-                    console.log(`Loading sprite: ${fullUrl}`);
+                    console.log(`[drawCreature] Loading sprite: ${fullUrl} for creature ${creature.id}`);
                     img.src = fullUrl;
                     this.spriteCache[creature.sprite_url] = img;
                 }
+                // Continue to fallback rendering below
             }
         }
 
-        // Fallback: Generate pixel art sprite
+        // Fallback: Always render pixel art when sprite isn't ready (or doesn't exist)
+        // This ensures creatures are always visible, even while sprites are loading
         const pixelSprite = this.generatePixelArtSprite(creature);
         if (pixelSprite && pixelSprite.complete) {
             const spriteSize = 32;
@@ -1361,7 +1486,7 @@ class GameClient {
             );
             this.ctx.restore();
         } else {
-            // If sprite not ready yet, draw simple pixel placeholder
+            // If pixel sprite not ready yet, draw simple pixel placeholder
             const colorMap = {
                 'blue': '#667eea',
                 'red': '#f56565',
@@ -1840,69 +1965,39 @@ class GameClient {
         this.ctx.restore();
     }
 
-    drawUI(turn) {
-        // Draw turn counter with pixel art styling
-        this.ctx.save();
-        this.ctx.imageSmoothingEnabled = false;
-        
-        // Background for text (pixel art - solid rectangle, no rounded corners)
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.fillRect(8, 8, 100, 28);
-        
-        // Border (pixel art - 2px solid)
-        this.ctx.strokeStyle = '#667eea';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(8, 8, 100, 28);
-        
-        // Text (pixel art style - monospace font)
-        this.ctx.fillStyle = '#1a1a2e';
-        this.ctx.font = 'bold 14px monospace';
-        this.ctx.textAlign = 'left';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(`Turn: ${turn}`, 18, 22);
-        
-        // Draw weather indicator (pixel art style)
-        const weatherEnv = this.gameState.environment || this.gameState.world?.environment;
-        if (weatherEnv?.weather) {
-            const weather = weatherEnv.weather;
-            const weatherIcons = {
-                'clear': '☀️',
-                'storm': '⛈️',
-                'fog': '🌫️',
-                'heat_wave': '🔥',
-                'cold_snap': '❄️'
-            };
-            const icon = weatherIcons[weather] || '☀️';
-            
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.fillRect(this.canvas.width - 50, 8, 42, 28);
-            this.ctx.strokeStyle = '#667eea';
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(this.canvas.width - 50, 8, 42, 28);
-            
-            this.ctx.font = '20px monospace';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText(icon, this.canvas.width - 29, 22);
+    updateGameInfoUI() {
+        // Update turn number
+        const turnElement = document.getElementById('turnNumber');
+        if (turnElement) {
+            const currentTurn = this.gameState?.turn ?? 0;
+            turnElement.textContent = currentTurn;
         }
         
-        // Draw day/night indicator (pixel art style)
-        const dayNightEnv = this.gameState.environment || this.gameState.world?.environment;
-        if (dayNightEnv) {
-            const isDay = dayNightEnv.is_day !== false;
-            const timeIcon = isDay ? '☀️' : '🌙';
-            
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.fillRect(this.canvas.width - 100, 8, 42, 28);
-            this.ctx.strokeStyle = '#667eea';
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(this.canvas.width - 100, 8, 42, 28);
-            
-            this.ctx.font = '18px monospace';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText(timeIcon, this.canvas.width - 79, 22);
+        // Update day/night indicator
+        const dayNightIcon = document.getElementById('dayNightIcon');
+        if (dayNightIcon) {
+            const env = this.gameState?.environment || this.gameState?.world?.environment;
+            const isDay = env?.is_day !== false;
+            dayNightIcon.textContent = isDay ? '☀️' : '🌙';
         }
         
-        this.ctx.restore();
+        // Update weather indicator
+        const weatherIcon = document.getElementById('weatherIcon');
+        if (weatherIcon) {
+            const env = this.gameState?.environment || this.gameState?.world?.environment;
+            if (env?.weather) {
+                const weatherIcons = {
+                    'clear': '☀️',
+                    'storm': '⛈️',
+                    'fog': '🌫️',
+                    'heat_wave': '🔥',
+                    'cold_snap': '❄️'
+                };
+                weatherIcon.textContent = weatherIcons[env.weather] || '☀️';
+            } else {
+                weatherIcon.textContent = '☀️';
+            }
+        }
     }
 
     updateEvents(events) {

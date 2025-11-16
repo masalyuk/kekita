@@ -504,6 +504,19 @@
         <div id="hearts" style="text-align: center; font-size: 24px; margin: 10px 0; color: #F44336;">❤️❤️❤️</div>
         <div id="stageTimer"></div>
 
+        <!-- Game Info Panel (Turn, Day/Night, Weather) -->
+        <div id="gameInfoPanel" style="display: flex; justify-content: center; align-items: center; gap: 20px; margin: 10px 0; padding: 12px; background: #ffffff; border: 2px solid #667eea; border-radius: 8px; box-shadow: 3px 3px 0px #764ba2;">
+            <div id="turnDisplay" style="padding: 8px 16px; background: rgba(102, 126, 234, 0.1); border-radius: 6px; font-family: 'Press Start 2P', monospace; font-size: 0.8rem; color: #1a1a2e;">
+                <strong>Turn:</strong> <span id="turnNumber">0</span>
+            </div>
+            <div id="dayNightDisplay" style="padding: 8px 16px; background: rgba(102, 126, 234, 0.1); border-radius: 6px; font-size: 20px;">
+                <span id="dayNightIcon">☀️</span>
+            </div>
+            <div id="weatherDisplay" style="padding: 8px 16px; background: rgba(102, 126, 234, 0.1); border-radius: 6px; font-size: 20px;">
+                <span id="weatherIcon">☀️</span>
+            </div>
+        </div>
+
         <canvas id="gameCanvas" width="600" height="600"></canvas>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 30px;">

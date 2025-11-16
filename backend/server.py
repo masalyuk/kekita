@@ -693,24 +693,44 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             # Send update every simulation step (so frontend sees movement)
             stage_info = stage_controller.get_stage_info()
             
-            await websocket.send_json({
+            # Ensure all data is present and valid before sending
+            environment_data = step_result.get('environment') or {}
+            if not isinstance(environment_data, dict) or len(environment_data) == 0:
+                # If environment is missing, create default
+                environment_data = {
+                    'weather': 'clear',
+                    'is_day': True,
+                    'day_night_cycle': 0,
+                    'biomes': {}
+                }
+            
+            # Ensure resources has food array
+            resources_data = step_result.get('resources', {})
+            if 'food' not in resources_data:
+                resources_data['food'] = []
+            
+            # Build complete update payload
+            update_payload = {
                 'status': 'update',
-                'turn': step_result['turn'],
-                'stage': stage_info['stage'],
-                'time_remaining': stage_info['time_remaining'],
-                'attempt_number': game['attempt_number'],
-                'max_attempts': game['max_attempts'],
-                'attempts_remaining': game['max_attempts'] - game['attempt_number'] + 1,
+                'turn': step_result.get('turn', 0),
+                'stage': stage_info.get('stage', 1),
+                'time_remaining': stage_info.get('time_remaining', 60),
+                'attempt_number': game.get('attempt_number', 1),
+                'max_attempts': game.get('max_attempts', 3),
+                'attempts_remaining': game.get('max_attempts', 3) - game.get('attempt_number', 1) + 1,
                 'world': {
-                    'creatures': step_result['creatures'],
-                    'resources': step_result['resources']
+                    'creatures': step_result.get('creatures', []),
+                    'resources': resources_data
                 },
-                'events': step_result['events'][-5:],  # Last 5 events
-                'environment': step_result.get('environment'),
+                'events': step_result.get('events', [])[-5:],  # Last 5 events
+                'environment': environment_data,
                 'territories': step_result.get('territories', {}),
+                'disasters': step_result.get('disasters', []),
                 'regions': step_result.get('regions', {}),
-                'scoring': step_result.get('scoring')
-            })
+                'scoring': step_result.get('scoring', {})
+            }
+            
+            await websocket.send_json(update_payload)
             
             # Small delay between turns
             await asyncio.sleep(0.5)

@@ -48,7 +48,7 @@ class Environment:
         self.turn_counter = 0
         self.predators: List = []  # List of predator creature IDs
         self.predator_spawn_timer = 0
-        self.predator_spawn_interval = 30  # Spawn predator every 30 turns
+        self.predator_spawn_interval = 15  # Spawn predator every 15 turns (reduced from 30 for better gameplay)
         self.disaster_timer = 0
         self.disaster_interval = 50  # Trigger disaster every 50 turns
         self.active_disasters: List[Dict] = []  # List of active disaster dicts
@@ -70,10 +70,12 @@ class Environment:
             self.weather_change_turn = self.turn_counter
         
         # Spawn predators periodically
-        self.predator_spawn_timer += 1
-        if self.predator_spawn_timer >= self.predator_spawn_interval:
+        # Use turn_counter which increments before world.turn, so it matches the actual turn number
+        # turn_counter is incremented at the start of this function, so it equals world.turn + 1
+        # But we want to spawn when turn_counter reaches the interval
+        if self.turn_counter > 0 and self.turn_counter % self.predator_spawn_interval == 0:
+            print(f"[Environment] Turn {self.turn_counter}: Predator spawn check (interval: {self.predator_spawn_interval}), attempting spawn...")
             self._spawn_predator()
-            self.predator_spawn_timer = 0
         
         # Update predator AI
         self._update_predators()
@@ -147,6 +149,7 @@ class Environment:
         # Find a random position away from player creatures
         player_creatures = [c for c in self.world.cells if c.alive and c.player_id is not None]
         if not player_creatures:
+            print(f"[Environment] No player creatures to hunt, skipping predator spawn")
             return  # No players to hunt
         
         # Spawn at edge of world
@@ -157,6 +160,16 @@ class Environment:
             (random.randint(0, self.world.width - 1), self.world.height - 1)
         ]
         x, y = random.choice(spawn_positions)
+        
+        # Avoid spawning on existing cells or food
+        attempts = 0
+        while (any(c.x == x and c.y == y for c in self.world.cells) or
+               any(f['x'] == x and f['y'] == y for f in self.world.food)):
+            x, y = random.choice(spawn_positions)
+            attempts += 1
+            if attempts > 10:  # Prevent infinite loop
+                print(f"[Environment] Could not find valid spawn position for predator after {attempts} attempts")
+                return
         
         # Create predator with aggressive traits
         predator_traits = {
@@ -181,7 +194,7 @@ class Environment:
         self.world._resource_id_counter += 1
         self.predators.append(predator.id)
         
-        print(f"[Environment] Spawned predator {predator.id} at ({x}, {y})")
+        print(f"[Environment] ✓ Spawned predator {predator.id} at ({x}, {y}) with {predator.energy} energy. Total predators: {len(self.predators)}")
 
     def _update_predators(self):
         """Update predator AI - make them hunt player creatures."""
