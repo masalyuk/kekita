@@ -67,6 +67,20 @@ class LLMResponseParser:
             direction = LLMResponseParser.extract_direction(response)
             return {'action': 'migrate', 'direction': direction}
 
+        elif 'HIDE' in response:
+            # Hide action - hide in shelter
+            # Try to extract target ID (shelter ID)
+            match = re.search(r'\d+', response)
+            target_id = int(match.group()) if match else None
+            return {'action': 'hide', 'target_id': target_id}
+
+        elif 'DRINK' in response:
+            # Drink action - drink water
+            # Try to extract target ID
+            match = re.search(r'\d+', response)
+            target_id = int(match.group()) if match else None
+            return {'action': 'drink', 'target_id': target_id}
+
         else:
             # Fallback: random movement
             import random

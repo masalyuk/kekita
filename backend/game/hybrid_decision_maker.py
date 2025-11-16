@@ -153,11 +153,29 @@ class HybridDecisionMaker:
         nearby = world_state['nearby']
         energy = cell.energy
 
-        # Rule 1: Food at current position → eat it
+        # Rule 1: Check for special resources first
         if nearby['food'] and nearby['food'][0]['dist'] < 1.5:
-            action = {'action': 'eat', 'target_id': nearby['food'][0]['id']}
-            print(f"[DEBUG] Rule 1: Food nearby, eating")
-            return action
+            food_item = nearby['food'][0]
+            food_type = food_item.get('type', 'apple')
+            
+            # Water nearby → drink it
+            if food_type == 'water':
+                action = {'action': 'drink', 'target_id': food_item['id']}
+                print(f"[DEBUG] Rule 1: Water nearby, drinking")
+                return action
+            
+            # Shelter nearby → hide in it (especially if enemy nearby)
+            if food_type == 'shelter':
+                if nearby['enemy'] and nearby['enemy'][0]['dist'] < 2:
+                    action = {'action': 'hide', 'target_id': food_item['id']}
+                    print(f"[DEBUG] Rule 1: Shelter nearby with enemy, hiding")
+                    return action
+            
+            # Regular food → eat it
+            if food_type not in ['water', 'shelter']:
+                action = {'action': 'eat', 'target_id': food_item['id']}
+                print(f"[DEBUG] Rule 1: Food nearby, eating")
+                return action
 
         # Rule 2: Very low energy → find food ASAP
         if energy < 20 and nearby['food']:

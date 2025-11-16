@@ -1,8 +1,8 @@
-"""Environmental system for hazards, weather, and world events."""
+"""Environmental system for weather, disasters, and world events."""
 
 import random
 import math
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from enum import Enum
 
 
@@ -15,21 +15,23 @@ class WeatherType(Enum):
     COLD_SNAP = "cold_snap"
 
 
-class HazardType(Enum):
-    """Types of environmental hazards."""
-    POISON_ZONE = "poison_zone"
-    DANGEROUS_AREA = "dangerous_area"
-    PREDATOR = "predator"
-
-
 class DisasterType(Enum):
     """Types of natural disasters."""
     EARTHQUAKE = "earthquake"
     FLOOD = "flood"
 
 
+class BiomeType(Enum):
+    """Types of biomes."""
+    FOREST = "forest"
+    SNOW = "snow"
+    DESERT = "desert"
+    GRASSLAND = "grassland"
+    TUNDRA = "tundra"
+
+
 class Environment:
-    """Manages environmental conditions and hazards."""
+    """Manages environmental conditions, weather, and disasters."""
     
     def __init__(self, world):
         """
@@ -42,7 +44,6 @@ class Environment:
         self.weather: WeatherType = WeatherType.CLEAR
         self.weather_duration = 0
         self.weather_change_turn = 0
-        self.hazards: List[Dict] = []  # List of hazard dicts
         self.day_night_cycle = 0  # 0-100, 0-50 = day, 50-100 = night
         self.turn_counter = 0
         self.predators: List = []  # List of predator creature IDs
@@ -52,34 +53,9 @@ class Environment:
         self.disaster_interval = 50  # Trigger disaster every 50 turns
         self.active_disasters: List[Dict] = []  # List of active disaster dicts
         
-        # Initialize some hazards
-        self._spawn_hazards()
-    
-    def _spawn_hazards(self, num_poison_zones=2, num_dangerous_areas=1):
-        """Spawn initial environmental hazards."""
-        for _ in range(num_poison_zones):
-            x = random.randint(0, self.world.width - 1)
-            y = random.randint(0, self.world.height - 1)
-            radius = random.randint(2, 4)
-            self.hazards.append({
-                'type': HazardType.POISON_ZONE,
-                'x': x,
-                'y': y,
-                'radius': radius,
-                'damage_per_turn': 5
-            })
-        
-        for _ in range(num_dangerous_areas):
-            x = random.randint(0, self.world.width - 1)
-            y = random.randint(0, self.world.height - 1)
-            radius = random.randint(1, 3)
-            self.hazards.append({
-                'type': HazardType.DANGEROUS_AREA,
-                'x': x,
-                'y': y,
-                'radius': radius,
-                'damage_per_turn': 3
-            })
+        # Biome system: map grid coordinates to biome types
+        self.biome_map: Dict[Tuple[int, int], BiomeType] = {}
+        self._initialize_biomes()
     
     def update(self):
         """Update environmental conditions each turn."""
@@ -113,9 +89,6 @@ class Environment:
         
         # Apply weather effects to creatures
         self._apply_weather_effects()
-        
-        # Apply hazard effects
-        self._apply_hazard_effects()
     
     def _change_weather(self):
         """Change weather condition randomly."""
@@ -145,36 +118,6 @@ class Environment:
         elif self.weather == WeatherType.FOG:
             # Fog reduces detection radius (handled in get_nearby)
             pass
-    
-    def _apply_hazard_effects(self):
-        """Apply hazard effects to creatures in hazard zones."""
-        for hazard in self.hazards:
-            for creature in self.world.cells:
-                if not creature.alive:
-                    continue
-                
-                distance = math.sqrt((creature.x - hazard['x'])**2 + (creature.y - hazard['y'])**2)
-                if distance <= hazard['radius']:
-                    # Creature is in hazard zone
-                    damage = hazard['damage_per_turn']
-                    creature.energy = max(0, creature.energy - damage)
-    
-    def is_in_hazard(self, x: int, y: int) -> Tuple[bool, Optional[HazardType]]:
-        """
-        Check if position is in a hazard zone.
-        
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            
-        Returns:
-            Tuple of (is_in_hazard, hazard_type)
-        """
-        for hazard in self.hazards:
-            distance = math.sqrt((x - hazard['x'])**2 + (y - hazard['y'])**2)
-            if distance <= hazard['radius']:
-                return True, hazard['type']
-        return False, None
     
     def is_day(self) -> bool:
         """Check if it's currently day time."""
@@ -446,4 +389,49 @@ class Environment:
         # Remove expired disasters
         for disaster in expired_disasters:
             self.active_disasters.remove(disaster)
+    
+    def _initialize_biomes(self):
+        """Initialize biome map by assigning biomes to regions (5x5 cells)."""
+        region_size = 5
+        biome_types = list(BiomeType)
+        
+        # Calculate number of regions
+        num_regions_x = (self.world.width + region_size - 1) // region_size
+        num_regions_y = (self.world.height + region_size - 1) // region_size
+        
+        # Assign biomes to regions
+        for rx in range(num_regions_x):
+            for ry in range(num_regions_y):
+                # Randomly assign a biome to this region
+                # Can be influenced by weather later
+                biome = random.choice(biome_types)
+                
+                # Assign this biome to all cells in this region
+                for x in range(rx * region_size, min((rx + 1) * region_size, self.world.width)):
+                    for y in range(ry * region_size, min((ry + 1) * region_size, self.world.height)):
+                        self.biome_map[(x, y)] = biome
+        
+        print(f"[Environment] Initialized biomes for {len(self.biome_map)} cells")
+    
+    def get_biome(self, x: int, y: int) -> BiomeType:
+        """
+        Get biome type for a grid coordinate.
+        
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            
+        Returns:
+            BiomeType for the coordinate
+        """
+        return self.biome_map.get((x, y), BiomeType.GRASSLAND)
+    
+    def get_biome_map(self) -> Dict[str, str]:
+        """
+        Get biome map as dictionary for frontend.
+        
+        Returns:
+            Dictionary mapping "x,y" strings to biome type strings
+        """
+        return {f"{x},{y}": biome.value for (x, y), biome in self.biome_map.items()}
 

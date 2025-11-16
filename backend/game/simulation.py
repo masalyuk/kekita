@@ -142,23 +142,14 @@ class Simulation:
         environment_data = {
             'weather': self.world.environment.weather.value if hasattr(self.world.environment.weather, 'value') else str(self.world.environment.weather),
             'is_day': self.world.environment.is_day(),
-            'day_night_cycle': self.world.environment.day_night_cycle
+            'day_night_cycle': self.world.environment.day_night_cycle,
+            'biomes': self.world.environment.get_biome_map()
         }
         
         # Get territory data
         territories_data = {}
         for region_key, territory in self.world.territory_manager.territories.items():
             territories_data[f"{region_key[0]},{region_key[1]}"] = territory.owner_id
-        
-        # Get hazards data
-        hazards_data = []
-        for hazard in self.world.environment.hazards:
-            hazards_data.append({
-                'x': hazard['x'],
-                'y': hazard['y'],
-                'radius': hazard['radius'],
-                'type': hazard['type'].value if hasattr(hazard['type'], 'value') else str(hazard['type'])
-            })
         
         # Get disasters data
         disasters_data = []
@@ -187,7 +178,6 @@ class Simulation:
             'evolved_creatures': evolved_creatures,  # Return evolved creatures for sprite regeneration
             'environment': environment_data,
             'territories': territories_data,
-            'hazards': hazards_data,
             'disasters': disasters_data,
             'regions': regions_data,
             'scoring': self.scoring.get_score_summary()

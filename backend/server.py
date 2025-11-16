@@ -683,7 +683,6 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                 'events': step_result['events'][-5:],  # Last 5 events
                 'environment': step_result.get('environment'),
                 'territories': step_result.get('territories', {}),
-                'hazards': step_result.get('hazards', []),
                 'regions': step_result.get('regions', {}),
                 'scoring': step_result.get('scoring')
             })

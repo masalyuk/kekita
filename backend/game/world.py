@@ -135,10 +135,36 @@ class World:
             pos_x, pos_y = creature.x, creature.y
         self.spatial_index.add_object(creature.id, pos_x, pos_y, 'creature')
 
+    def _get_allowed_food_types_for_biome(self, biome):
+        """
+        Get list of food types allowed in a given biome.
+        
+        Args:
+            biome: BiomeType enum value
+            
+        Returns:
+            List of food type strings allowed in this biome
+        """
+        from .environment import BiomeType
+        
+        # Fruits (apple, banana, grapes) only spawn in forest and grassland
+        if biome in [BiomeType.FOREST, BiomeType.GRASSLAND]:
+            return self.FOOD_TYPES  # All fruits allowed
+        elif biome in [BiomeType.SNOW, BiomeType.TUNDRA]:
+            # Snow and tundra biomes - no fruits, could add other food types later
+            return []  # No food spawns in snow/tundra for now
+        elif biome == BiomeType.DESERT:
+            # Desert biome - no fruits, could add other food types later
+            return []  # No food spawns in desert for now
+        else:
+            # Default: allow all food types
+            return self.FOOD_TYPES
+    
     def spawn_resources(self, num_food=50, num_poison=0):
         """
         Generate food items at random positions using type-based configuration.
         Uses regional density to create food scarcity/abundance zones.
+        Respects biome-specific food distribution.
         
         Args:
             num_food: Total number of food items to spawn (base amount)
@@ -162,6 +188,14 @@ class World:
             if any(c.x == x and c.y == y for c in self.cells):
                 continue
             
+            # Get biome for this position
+            biome = self.environment.get_biome(x, y)
+            allowed_food_types = self._get_allowed_food_types_for_biome(biome)
+            
+            # Skip if no food types are allowed in this biome
+            if not allowed_food_types:
+                continue  # Skip this position - no food spawns in this biome
+            
             # Get regional density for this position
             region_density = self.get_region_density(x, y)
             
@@ -176,8 +210,8 @@ class World:
             if random.random() > spawn_probability:
                 continue  # Skip this position
             
-            # Randomly assign a food type
-            food_type = random.choice(self.FOOD_TYPES)
+            # Randomly assign a food type from allowed types for this biome
+            food_type = random.choice(allowed_food_types)
             
             # Get base energy from config and apply ±10% variation
             base_energy = self.food_type_config[food_type]['base_energy']
@@ -391,6 +425,102 @@ class World:
                     })
                 else:
                     print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} movement blocked by collision at ({new_x}, {new_y})")
+                
+                # Check if creature moved away from shelter - auto-unhide
+                if creature.shelter_id is not None:
+                    # Check if still at shelter location
+                    shelter_item = next((f for f in self.food if f['id'] == creature.shelter_id and f.get('type') == 'shelter'), None)
+                    if shelter_item:
+                        # Check if still at shelter position (within 1 cell)
+                        if abs(creature.x - shelter_item['x']) > 1 or abs(creature.y - shelter_item['y']) > 1:
+                            # Moved away from shelter
+                            creature.shelter_id = None
+                            stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                            events.append(f"{stage_name} {creature.id} left shelter")
+                    else:
+                        # Shelter no longer exists
+                        creature.shelter_id = None
+
+            elif action_type == 'hide':
+                target_id = action.get('target_id')
+                # Find shelter item by ID or by position
+                if target_id:
+                    shelter_item = next((f for f in self.food if f['id'] == target_id and f.get('type') == 'shelter'), None)
+                else:
+                    # If no target_id, try to find shelter at current position or adjacent
+                    shelter_item = next(
+                        (f for f in self.food if f.get('type') == 'shelter' and abs(f['x'] - pos_x) <= 1 and abs(f['y'] - pos_y) <= 1),
+                        None
+                    )
+                
+                if shelter_item:
+                    # Check if creature is at shelter location (within 1 cell)
+                    if abs(creature.x - shelter_item['x']) <= 1 and abs(creature.y - shelter_item['y']) <= 1:
+                        creature.shelter_id = shelter_item['id']
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} hid in shelter at ({shelter_item['x']}, {shelter_item['y']})")
+                        detailed_events.append({
+                            'creature_id': creature.id,
+                            'type': 'hide',
+                            'location': (shelter_item['x'], shelter_item['y']),
+                            'target_id': shelter_item['id']
+                        })
+                    else:
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} tried to hide but not at shelter location")
+                else:
+                    stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                    events.append(f"{stage_name} {creature.id} tried to hide but no shelter found")
+
+            elif action_type == 'drink':
+                target_id = action.get('target_id')
+                # Find water item by ID or by position
+                if target_id:
+                    water_item = next((f for f in self.food if f['id'] == target_id and f.get('type') == 'water'), None)
+                else:
+                    # If no target_id, try to drink water at current position or adjacent
+                    water_item = next(
+                        (f for f in self.food if f.get('type') == 'water' and abs(f['x'] - pos_x) <= 1 and abs(f['y'] - pos_y) <= 1),
+                        None
+                    )
+                
+                if water_item:
+                    energy_value = water_item.get('energy_value', 20)  # Default 20 for water
+                    
+                    # Check resource competition - can creature access this resource?
+                    if not self.resource_manager.can_access_resource(creature.id, water_item['id']):
+                        print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} cannot access water resource {water_item['id']} - claimed by another")
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} tried to drink water but it's claimed by another creature")
+                        continue
+                    
+                    # Claim resource if not already claimed
+                    self.resource_manager.claim_resource(creature.id, water_item['id'])
+                    
+                    # Remove from spatial index before removing from food list
+                    self.spatial_index.remove_object(water_item['id'], water_item['x'], water_item['y'])
+                    self.food.remove(water_item)
+                    
+                    # Mark resource as consumed for regeneration tracking
+                    self.resource_manager.mark_resource_consumed(water_item['id'], water_item['x'], water_item['y'])
+                    
+                    # Apply energy gain
+                    creature.energy = min(100, creature.energy + energy_value)
+                    self.energy_events.add(('drink', 'water', energy_value))
+                    
+                    stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                    events.append(f"{stage_name} {creature.id} drank water at ({water_item['x']}, {water_item['y']}) - gained {energy_value} energy")
+                    
+                    detailed_events.append({
+                        'creature_id': creature.id,
+                        'type': 'drink',
+                        'location': (water_item['x'], water_item['y']),
+                        'target_id': water_item['id'],
+                        'food_type': 'water'
+                    })
+                else:
+                    stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                    events.append(f"{stage_name} {creature.id} tried to drink but no water found")
 
             elif action_type == 'eat':
                 target_id = action.get('target_id')
@@ -405,6 +535,19 @@ class World:
                     )
                 if food_item:
                     food_type = food_item.get('type', 'apple')
+                    
+                    # Prevent eating water - should use drink action instead
+                    if food_type == 'water':
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} tried to eat water - use DRINK action instead")
+                        continue
+                    
+                    # Prevent eating shelter - should use hide action instead
+                    if food_type == 'shelter':
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} tried to eat shelter - use HIDE action instead")
+                        continue
+                    
                     energy_value = food_item.get('energy_value', 0)
                     
                     # Get food type properties from config
@@ -466,6 +609,17 @@ class World:
                 new_y = max(0, min(self.height - 1, pos_y + dy))
                 creature.x = new_x
                 creature.y = new_y
+                
+                # Check if creature moved away from shelter - auto-unhide
+                if creature.shelter_id is not None:
+                    shelter_item = next((f for f in self.food if f['id'] == creature.shelter_id and f.get('type') == 'shelter'), None)
+                    if shelter_item:
+                        if abs(creature.x - shelter_item['x']) > 1 or abs(creature.y - shelter_item['y']) > 1:
+                            creature.shelter_id = None
+                            stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                            events.append(f"{stage_name} {creature.id} left shelter")
+                    else:
+                        creature.shelter_id = None
                 # Fleeing costs more, but scales with speed (faster creatures flee more efficiently)
                 flee_cost = max(1, 3 - creature.speed // 2)
                 creature.energy -= flee_cost
@@ -500,6 +654,13 @@ class World:
                                 break
                 
                 if target_creature and Combat.can_attack(creature, target_creature):
+                    # Check if target is hidden in shelter - if so, block attack
+                    if target_creature.shelter_id is not None:
+                        stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
+                        target_stage_name = "Cell" if target_creature.stage == 1 else ("Multicellular" if target_creature.stage == 2 else "Organism")
+                        events.append(f"{stage_name} {creature.id} tried to attack {target_stage_name} {target_creature.id} but it's hidden in shelter!")
+                        continue
+                    
                     # Resolve combat
                     damage, defender_killed, energy_gained = Combat.resolve_combat(creature, target_creature)
                     

@@ -46,9 +46,34 @@ class LLMPromptBuilder:
         # Build available actions based on nearby zone and conditions
         available_actions = ["MOVE"]  # MOVE is always available
         
-        # EAT: only if food is nearby (within eating range ~1.5 cells)
+        # Check for special resources (water, shelter) and regular food
         food_nearby = nearby['food'] and nearby['food'][0]['dist'] < 1.5
+        water_nearby = False
+        shelter_nearby = False
+        regular_food_nearby = False
+        
         if food_nearby:
+            # Check what type of food is nearby
+            for food_item in nearby['food']:
+                if food_item['dist'] < 1.5:
+                    food_type = food_item.get('type', 'apple')
+                    if food_type == 'water':
+                        water_nearby = True
+                    elif food_type == 'shelter':
+                        shelter_nearby = True
+                    else:
+                        regular_food_nearby = True
+        
+        # DRINK: if water is nearby
+        if water_nearby:
+            available_actions.append("DRINK")
+        
+        # HIDE: if shelter is nearby
+        if shelter_nearby:
+            available_actions.append("HIDE")
+        
+        # EAT: only if regular food (not water/shelter) is nearby
+        if regular_food_nearby:
             available_actions.append("EAT")
         
         # FLEE: always available if there are enemies
@@ -145,8 +170,35 @@ class LLMPromptBuilder:
             
             # Build available actions
             available_actions = ["MOVE"]
+            
+            # Check for special resources (water, shelter) and regular food
             food_nearby = nearby['food'] and nearby['food'][0]['dist'] < 1.5
+            water_nearby = False
+            shelter_nearby = False
+            regular_food_nearby = False
+            
             if food_nearby:
+                # Check what type of food is nearby
+                for food_item in nearby['food']:
+                    if food_item['dist'] < 1.5:
+                        food_type = food_item.get('type', 'apple')
+                        if food_type == 'water':
+                            water_nearby = True
+                        elif food_type == 'shelter':
+                            shelter_nearby = True
+                        else:
+                            regular_food_nearby = True
+            
+            # DRINK: if water is nearby
+            if water_nearby:
+                available_actions.append("DRINK")
+            
+            # HIDE: if shelter is nearby
+            if shelter_nearby:
+                available_actions.append("HIDE")
+            
+            # EAT: only if regular food (not water/shelter) is nearby
+            if regular_food_nearby:
                 available_actions.append("EAT")
             if nearby['enemy']:
                 available_actions.append("FLEE")

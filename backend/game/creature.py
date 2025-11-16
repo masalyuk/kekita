@@ -36,6 +36,7 @@ class Creature(ABC):
         self.alive = True
         self.stage = stage
         self.traits = traits  # Store original traits
+        self.shelter_id = None  # Track which shelter creature is hiding in (None when not hiding)
     
     @abstractmethod
     def to_dict(self):
