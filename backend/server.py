@@ -67,6 +67,7 @@ class PromptUpdateRequest(BaseModel):
 
 class ParsePromptRequest(BaseModel):
     prompt: str
+    generate_sprite: bool = False  # Only generate sprite when user confirms
 
 
 @app.on_event("startup")
@@ -171,8 +172,8 @@ def apply_trait_evolution(creature, new_traits):
 @app.post("/start_game")
 async def start_game(request: GameStartRequest):
     """Start a new game with single player prompt."""
-    # Clean up user sprites from previous games
-    cleanup_user_sprites()
+    # Don't clean up sprites - they should persist from confirm
+    # cleanup_user_sprites()  # Removed: sprites should persist from confirm
     
     traits = await PromptParser.parse(request.prompt, llm_manager=llm_manager)
 
@@ -185,16 +186,17 @@ async def start_game(request: GameStartRequest):
     food_type_config = world.food_type_config.copy()
     print(f"[start_game] Stored food_type_config for persistence across attempts")
 
-    # Generate sprite once for all creatures from same prompt
+    # Try to reuse sprite that was already generated on confirm
+    # If it doesn't exist, the game will use canvas drawing (sprite should already exist from confirm)
     sprite_url = None
     try:
-        sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 1, 1)
+        sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 1, 1, force_regenerate=False)
         if sprite_url:
-            print(f"[start_game] ✓ Sprite generated for prompt: {sprite_url}")
+            print(f"[start_game] ✓ Using sprite from confirm: {sprite_url}")
         else:
-            print(f"[start_game] ⚠ Sprite generation failed, creatures will use canvas drawing")
+            print(f"[start_game] ⚠ Sprite not found (should have been generated on confirm), creatures will use canvas drawing")
     except Exception as e:
-        print(f"[start_game] ✗ Error generating sprite: {e}, creatures will use canvas drawing")
+        print(f"[start_game] ✗ Error loading sprite: {e}, creatures will use canvas drawing")
     
     # Spawn {num_creatures} creatures (Stage 1) at random positions
     import random
@@ -316,16 +318,23 @@ async def parse_prompt(request: ParsePromptRequest):
         
         debug_info['validated_traits'] = traits
         
-        # Generate preview sprite using prompt hash
-        # Preview sprites now use the same hash system as game sprites
+        # Generate sprite only if explicitly requested (when user confirms)
+        # Only generate if sprite doesn't already exist (to avoid regeneration)
         sprite_url = None
-        try:
-            # Use prompt hash system (creature_id is not used for file naming anymore)
-            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1, force_regenerate=False)
-            if sprite_url:
-                print(f"[parse_prompt] ✓ Preview sprite generated: {sprite_url}")
-        except Exception as e:
-            print(f"[parse_prompt] ✗ Sprite generation failed: {e}")
+        if request.generate_sprite:
+            try:
+                # Check if sprite already exists first
+                prompt_hash = sprite_generator._get_prompt_hash(request.prompt, 1)
+                if sprite_generator._sprite_exists(prompt_hash, 1):
+                    sprite_url = sprite_generator._get_sprite_url(prompt_hash, 1)
+                    print(f"[parse_prompt] ✓ Sprite already exists, reusing: {sprite_url}")
+                else:
+                    # Only generate if sprite doesn't exist
+                    sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1, force_regenerate=False)
+                    if sprite_url:
+                        print(f"[parse_prompt] ✓ Sprite generated on confirm: {sprite_url}")
+            except Exception as e:
+                print(f"[parse_prompt] ✗ Sprite generation failed: {e}")
         
         total_time = time.time() - start_time
         debug_info['timing']['total'] = total_time
@@ -356,12 +365,18 @@ async def parse_prompt(request: ParsePromptRequest):
         debug_info['timing']['total'] = total_time
         print(f"{'='*60}\n")
         
-        # Try to generate sprite even on error
+        # Try to generate sprite even on error (only if requested)
         sprite_url = None
-        try:
-            sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1)
-        except Exception:
-            pass
+        if request.generate_sprite:
+            try:
+                # Check if sprite already exists first
+                prompt_hash = sprite_generator._get_prompt_hash(request.prompt, 1)
+                if sprite_generator._sprite_exists(prompt_hash, 1):
+                    sprite_url = sprite_generator._get_sprite_url(prompt_hash, 1)
+                else:
+                    sprite_url = await sprite_generator.get_or_generate_sprite(request.prompt, 0, 1, force_regenerate=False)
+            except Exception:
+                pass
         
         return {
             'success': False,
@@ -460,20 +475,30 @@ async def _restart_attempt(game, world, request, current_stage):
             # Reset age (optional - could keep age for continuity)
             # creature.age = 0
         
-        # Regenerate sprite with updated prompt
-        evolution_prompt = ", ".join(game['prompt_history'])
+        # Reuse sprite from original confirm (don't regenerate on restart)
+        # Use the original prompt from confirm, not the evolution prompt
+        original_prompt = game['prompt_history'][0] if game.get('prompt_history') else request.prompt
         sprite_url = None
         try:
-            sprite_url = await sprite_generator.generate_sprite(
-                evolution_prompt, 0, current_stage, force_regenerate=True
-            )
+            # Check if sprite exists for original prompt (from confirm)
+            prompt_hash = sprite_generator._get_prompt_hash(original_prompt, current_stage)
+            if sprite_generator._sprite_exists(prompt_hash, current_stage):
+                sprite_url = sprite_generator._get_sprite_url(prompt_hash, current_stage)
+                print(f"[restart_attempt] ✓ Reusing sprite from confirm: {sprite_url}")
+            else:
+                # Only generate if sprite doesn't exist (shouldn't happen if confirm worked)
+                sprite_url = await sprite_generator.get_or_generate_sprite(
+                    original_prompt, 0, current_stage, force_regenerate=False
+                )
+                if sprite_url:
+                    print(f"[restart_attempt] ✓ Generated sprite (was missing): {sprite_url}")
+            
+            # Assign sprite to all creatures
             if sprite_url:
-                print(f"[restart_attempt] ✓ Regenerated sprite: {sprite_url}")
-                # Assign sprite to all creatures
                 for creature in world.cells:
                     creature.sprite_url = sprite_url
         except Exception as e:
-            print(f"[restart_attempt] ✗ Error regenerating sprite: {e}")
+            print(f"[restart_attempt] ✗ Error loading sprite: {e}")
         
         # Increment attempt number (before clearing flag so WebSocket loop can check)
         game['attempt_number'] += 1

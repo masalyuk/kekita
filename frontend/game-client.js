@@ -1972,7 +1972,7 @@ class GameClient {
         }
     }
 
-    async previewTraits(prompt, playerId, isEvolution = false) {
+    async previewTraits(prompt, playerId, isEvolution = false, generateSprite = false) {
         if (!prompt || prompt.trim().length === 0) {
             this.clearPreview(playerId, isEvolution);
             return Promise.reject(new Error('Empty prompt'));
@@ -1983,7 +1983,7 @@ class GameClient {
             const response = await fetch('http://localhost:8000/parse_prompt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: prompt })
+                body: JSON.stringify({ prompt: prompt, generate_sprite: generateSprite })
             });
 
             if (!response.ok) {
@@ -2162,7 +2162,8 @@ document.addEventListener('DOMContentLoaded', () => {
             confirmBtn1.disabled = true;
             confirmBtn1.textContent = 'Confirming...';
             client.showPreviewLoading(1);
-            client.previewTraits(prompt, 1).then(() => {
+            // Generate sprite only when user confirms (generateSprite = true)
+            client.previewTraits(prompt, 1, false, true).then(() => {
                 confirmBtn1.textContent = 'Confirmed';
                 client.confirmedPlayer = true;
                 client.checkAndUpdateStartButton();
