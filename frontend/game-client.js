@@ -172,9 +172,38 @@ class GameClient {
                 this.maxAttempts = update.max_attempts;
             }
             this.updateHearts(update.attempts_remaining || (this.maxAttempts - this.attemptNumber + 1));
+            
+            // Add environment and territories to game state if available
+            if (update.environment) {
+                this.gameState.environment = update.environment;
+                if (!this.gameState.world) this.gameState.world = {};
+                this.gameState.world.environment = update.environment;
+            }
+            if (update.territories) {
+                if (!this.gameState.world) this.gameState.world = {};
+                this.gameState.world.territories = update.territories;
+            }
+            if (update.hazards) {
+                if (!this.gameState.world) this.gameState.world = {};
+                this.gameState.world.hazards = update.hazards;
+            }
+            if (update.disasters) {
+                if (!this.gameState.world) this.gameState.world = {};
+                this.gameState.world.disasters = update.disasters;
+            }
+            if (update.regions) {
+                if (!this.gameState.world) this.gameState.world = {};
+                this.gameState.world.regions = update.regions;
+            }
+            
             this.render();
             this.updateEvents(update.events || []);
             this.updateStageTimer(update.time_remaining);
+            
+            // Update scoring/achievements if available
+            if (update.scoring) {
+                this.updateScoring(update.scoring);
+            }
         } else if (update.status === 'game_started') {
             this.currentStage = update.stage;
             this.timeRemaining = update.time_remaining;
@@ -382,15 +411,42 @@ class GameClient {
     render() {
         if (!this.gameState || !this.gameState.world) return;
 
-        // Clear canvas with gradient background
+        // Clear canvas with gradient background (day/night aware)
+        const env = this.gameState.environment || this.gameState.world?.environment;
+        const isDay = env?.is_day !== false; // Default to day
         const gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, this.canvas.height);
-        gradient.addColorStop(0, '#f5f7fa');
-        gradient.addColorStop(1, '#c3cfe2');
+        if (isDay) {
+            gradient.addColorStop(0, '#f5f7fa');
+            gradient.addColorStop(1, '#c3cfe2');
+        } else {
+            gradient.addColorStop(0, '#2d3748');
+            gradient.addColorStop(1, '#1a202c');
+        }
         this.ctx.fillStyle = gradient;
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
         // Draw grid
         this.drawGrid();
+
+        // Draw environmental hazards
+        if (this.gameState.world.hazards) {
+            this.gameState.world.hazards.forEach(hazard => this.drawHazard(hazard));
+        }
+
+        // Draw natural disasters
+        if (this.gameState.world.disasters) {
+            this.gameState.world.disasters.forEach(disaster => this.drawDisaster(disaster));
+        }
+
+        // Draw territory markers
+        if (this.gameState.world.territories) {
+            this.drawTerritories(this.gameState.world.territories);
+        }
+
+        // Draw regional food density (background tint)
+        if (this.gameState.world.regions) {
+            this.drawRegionalDensity(this.gameState.world.regions);
+        }
 
         // Draw resources
         if (this.gameState.world.resources) {
@@ -400,6 +456,12 @@ class GameClient {
         // Draw creatures
         if (this.gameState.world.creatures) {
             this.gameState.world.creatures.forEach(creature => this.drawCreature(creature));
+        }
+
+        // Draw weather effects
+        const weather = env?.weather;
+        if (weather) {
+            this.drawWeather(weather);
         }
 
         // Draw UI
@@ -433,8 +495,11 @@ class GameClient {
         const x = creature.x * this.cellSize + this.cellSize / 2;
         const y = creature.y * this.cellSize + this.cellSize / 2;
 
+        // Check if this is an NPC predator (player_id is null)
+        const isPredator = creature.player_id === null || creature.player_id === undefined;
+
         // Try to use sprite if available
-        if (creature.sprite_url) {
+        if (creature.sprite_url && !isPredator) {
             const sprite = this.spriteCache[creature.sprite_url];
             if (sprite && sprite.complete && sprite.naturalWidth > 0) {
                 // Sprite loaded successfully, draw it with shadow
@@ -500,7 +565,8 @@ class GameClient {
         };
 
         const creatureColor = creature.color ? String(creature.color).toLowerCase().trim() : null;
-        const fillColor = colorMap[creatureColor] || (creatureColor && creatureColor.startsWith('#') ? creatureColor : '#667eea');
+        // Predators always use red color with darker shade
+        const fillColor = isPredator ? '#c53030' : (colorMap[creatureColor] || (creatureColor && creatureColor.startsWith('#') ? creatureColor : '#667eea'));
         const stage = creature.stage || 1;
         
         // Create gradient for creature
@@ -566,6 +632,51 @@ class GameClient {
 
         // Draw energy indicator
         this.drawEnergyBar(x, y, creature.energy);
+        
+        // Draw predator indicator (skull icon)
+        if (isPredator) {
+            this.ctx.save();
+            this.ctx.fillStyle = '#c53030';
+            this.ctx.font = 'bold 16px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('💀', x, y - 25);
+            this.ctx.restore();
+        }
+        
+        // Draw combat indicator if creature just attacked (from events)
+        if (creature.recent_action === 'attack') {
+            this.ctx.save();
+            this.ctx.strokeStyle = '#f56565';
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 18, 0, Math.PI * 2);
+            this.ctx.stroke();
+            this.ctx.restore();
+        }
+        
+        // Draw custom action indicators
+        if (creature.custom_actions) {
+            const actionIcons = {
+                'signal': '📡',
+                'claim': '🛡️',
+                'cooperate': '🤝',
+                'migrate': '🔄'
+            };
+            
+            let iconY = y - 30;
+            creature.custom_actions.forEach(action => {
+                if (actionIcons[action]) {
+                    this.ctx.save();
+                    this.ctx.font = '12px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    this.ctx.fillText(actionIcons[action], x + 20, iconY);
+                    iconY += 15;
+                    this.ctx.restore();
+                }
+            });
+        }
     }
     
     lightenColor(color, percent) {
@@ -619,6 +730,229 @@ class GameClient {
         this.ctx.stroke();
     }
 
+    drawRegionalDensity(regions) {
+        // Draw regional food density as background tint
+        const regionSize = 5;
+        const cellSize = this.cellSize;
+        
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.15;
+        
+        for (const [key, density] of Object.entries(regions)) {
+            const [rx, ry] = key.split(',').map(Number);
+            const startX = rx * regionSize * cellSize;
+            const startY = ry * regionSize * cellSize;
+            const width = regionSize * cellSize;
+            const height = regionSize * cellSize;
+            
+            // Color based on density: low = red tint, high = green tint
+            const intensity = (density - 0.3) / 1.2; // Normalize 0.3-1.5 to 0-1
+            const r = Math.floor(255 * (1 - intensity));
+            const g = Math.floor(255 * intensity);
+            const b = 0;
+            
+            this.ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.2)`;
+            this.ctx.fillRect(startX, startY, width, height);
+        }
+        
+        this.ctx.restore();
+    }
+
+    drawHazard(hazard) {
+        const x = hazard.x * this.cellSize + this.cellSize / 2;
+        const y = hazard.y * this.cellSize + this.cellSize / 2;
+        const radius = (hazard.radius || 2) * this.cellSize;
+        
+        this.ctx.save();
+        
+        // Draw hazard zone
+        if (hazard.type === 'poison_zone') {
+            this.ctx.fillStyle = 'rgba(245, 101, 101, 0.2)';
+            this.ctx.strokeStyle = 'rgba(245, 101, 101, 0.6)';
+        } else if (hazard.type === 'dangerous_area') {
+            this.ctx.fillStyle = 'rgba(237, 137, 54, 0.2)';
+            this.ctx.strokeStyle = 'rgba(237, 137, 54, 0.6)';
+        } else {
+            this.ctx.fillStyle = 'rgba(200, 200, 200, 0.2)';
+            this.ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)';
+        }
+        
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Draw warning symbol
+        this.ctx.fillStyle = 'rgba(245, 101, 101, 0.8)';
+        this.ctx.font = 'bold 16px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('⚠', x, y);
+        
+        this.ctx.restore();
+    }
+
+    drawDisaster(disaster) {
+        const x = disaster.x * this.cellSize + this.cellSize / 2;
+        const y = disaster.y * this.cellSize + this.cellSize / 2;
+        const radius = (disaster.radius || 3) * this.cellSize;
+        const disasterType = disaster.type;
+        
+        this.ctx.save();
+        
+        // Animated pulsing effect for disasters
+        const pulsePhase = (Date.now() / 500) % (Math.PI * 2);
+        const pulseAlpha = 0.3 + Math.sin(pulsePhase) * 0.2;
+        
+        if (disasterType === 'earthquake') {
+            // Earthquake - brown/orange with shaking effect
+            this.ctx.fillStyle = `rgba(139, 69, 19, ${pulseAlpha})`;
+            this.ctx.strokeStyle = 'rgba(160, 82, 45, 0.8)';
+            
+            // Draw cracked ground pattern
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.stroke();
+            
+            // Draw crack lines
+            this.ctx.strokeStyle = 'rgba(101, 67, 33, 0.9)';
+            this.ctx.lineWidth = 1.5;
+            for (let i = 0; i < 4; i++) {
+                const angle = (i * Math.PI * 2) / 4;
+                const startX = x + Math.cos(angle) * (radius * 0.3);
+                const startY = y + Math.sin(angle) * (radius * 0.3);
+                const endX = x + Math.cos(angle) * radius;
+                const endY = y + Math.sin(angle) * radius;
+                this.ctx.beginPath();
+                this.ctx.moveTo(startX, startY);
+                this.ctx.lineTo(endX, endY);
+                this.ctx.stroke();
+            }
+            
+            // Draw earthquake symbol
+            this.ctx.fillStyle = 'rgba(160, 82, 45, 0.9)';
+            this.ctx.font = 'bold 20px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('🌍', x, y);
+            
+        } else if (disasterType === 'flood') {
+            // Flood - blue with wave effect
+            this.ctx.fillStyle = `rgba(56, 178, 172, ${pulseAlpha})`;
+            this.ctx.strokeStyle = 'rgba(44, 122, 123, 0.8)';
+            
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.stroke();
+            
+            // Draw wave pattern
+            this.ctx.strokeStyle = 'rgba(44, 122, 123, 0.9)';
+            this.ctx.lineWidth = 2;
+            const waveOffset = Math.sin(pulsePhase) * 3;
+            for (let i = 0; i < 3; i++) {
+                const waveY = y - radius + (i * radius / 2) + waveOffset;
+                this.ctx.beginPath();
+                this.ctx.moveTo(x - radius, waveY);
+                for (let j = 0; j <= 20; j++) {
+                    const px = x - radius + (j * radius * 2 / 20);
+                    const py = waveY + Math.sin((j / 20) * Math.PI * 4 + pulsePhase) * 3;
+                    this.ctx.lineTo(px, py);
+                }
+                this.ctx.stroke();
+            }
+            
+            // Draw flood symbol
+            this.ctx.fillStyle = 'rgba(44, 122, 123, 0.9)';
+            this.ctx.font = 'bold 20px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('🌊', x, y);
+        }
+        
+        // Draw duration indicator
+        if (disaster.duration && disaster.elapsed !== undefined) {
+            const remaining = disaster.duration - disaster.elapsed;
+            if (remaining > 0) {
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                this.ctx.font = 'bold 10px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'top';
+                this.ctx.fillText(`${remaining}`, x, y + radius + 5);
+            }
+        }
+        
+        this.ctx.restore();
+    }
+
+    drawTerritories(territories) {
+        // Draw territory markers
+        const regionSize = 5;
+        const cellSize = this.cellSize;
+        
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.3;
+        
+        for (const [key, ownerId] of Object.entries(territories)) {
+            const [rx, ry] = key.split(',').map(Number);
+            const startX = rx * regionSize * cellSize;
+            const startY = ry * regionSize * cellSize;
+            const width = regionSize * cellSize;
+            const height = regionSize * cellSize;
+            
+            // Draw territory border
+            this.ctx.strokeStyle = 'rgba(102, 126, 234, 0.5)';
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([5, 5]);
+            this.ctx.strokeRect(startX, startY, width, height);
+            
+            // Draw claim marker
+            this.ctx.fillStyle = 'rgba(102, 126, 234, 0.1)';
+            this.ctx.fillRect(startX, startY, width, height);
+        }
+        
+        this.ctx.setLineDash([]);
+        this.ctx.restore();
+    }
+
+    drawWeather(weather) {
+        if (weather === 'storm' || weather === 'fog') {
+            this.ctx.save();
+            this.ctx.globalAlpha = 0.3;
+            
+            if (weather === 'storm') {
+                // Draw rain effect
+                this.ctx.strokeStyle = 'rgba(100, 150, 200, 0.5)';
+                this.ctx.lineWidth = 1;
+                for (let i = 0; i < 50; i++) {
+                    const x = Math.random() * this.canvas.width;
+                    const y = Math.random() * this.canvas.height;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, y);
+                    this.ctx.lineTo(x + 2, y + 8);
+                    this.ctx.stroke();
+                }
+            } else if (weather === 'fog') {
+                // Draw fog effect
+                this.ctx.fillStyle = 'rgba(200, 200, 200, 0.4)';
+                for (let i = 0; i < 20; i++) {
+                    const x = Math.random() * this.canvas.width;
+                    const y = Math.random() * this.canvas.height;
+                    const radius = 30 + Math.random() * 40;
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+            
+            this.ctx.restore();
+        }
+    }
+
     drawFood(food) {
         const x = food.x * this.cellSize + this.cellSize / 2;
         const y = food.y * this.cellSize + this.cellSize / 2;
@@ -633,7 +967,42 @@ class GameClient {
         this.ctx.shadowOffsetX = 1;
         this.ctx.shadowOffsetY = 1;
         
-        if (foodType === 'apple') {
+        // Check if special resource (water, shelter)
+        if (foodType === 'water') {
+            // Draw water source
+            const waterGradient = this.ctx.createRadialGradient(x - 3, y - 3, 0, x, y, 12);
+            waterGradient.addColorStop(0, '#38b2ac');
+            waterGradient.addColorStop(1, '#2c7a7b');
+            this.ctx.fillStyle = waterGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 11, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Draw water symbol
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.font = 'bold 14px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('💧', x, y);
+        } else if (foodType === 'shelter') {
+            // Draw shelter
+            this.ctx.fillStyle = '#8b7355';
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y - 10);
+            this.ctx.lineTo(x - 8, y + 5);
+            this.ctx.lineTo(x + 8, y + 5);
+            this.ctx.closePath();
+            this.ctx.fill();
+            
+            // Draw shelter symbol
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.font = 'bold 12px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('🏠', x, y);
+        } else if (foodType === 'apple') {
             // Apple with gradient
             const appleGradient = this.ctx.createRadialGradient(x - 2, y - 2, 0, x, y, 12);
             appleGradient.addColorStop(0, '#ff6b6b');
@@ -717,6 +1086,45 @@ class GameClient {
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(`Turn: ${turn}`, 18, 22);
         
+        // Draw weather indicator
+        const weatherEnv = this.gameState.environment || this.gameState.world?.environment;
+        if (weatherEnv?.weather) {
+            const weather = weatherEnv.weather;
+            const weatherIcons = {
+                'clear': '☀️',
+                'storm': '⛈️',
+                'fog': '🌫️',
+                'heat_wave': '🔥',
+                'cold_snap': '❄️'
+            };
+            const icon = weatherIcons[weather] || '☀️';
+            
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            this.ctx.beginPath();
+            this.ctx.roundRect(this.canvas.width - 50, 8, 42, 28, 8);
+            this.ctx.fill();
+            
+            this.ctx.font = '20px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(icon, this.canvas.width - 29, 22);
+        }
+        
+        // Draw day/night indicator
+        const dayNightEnv = this.gameState.environment || this.gameState.world?.environment;
+        if (dayNightEnv) {
+            const isDay = dayNightEnv.is_day !== false;
+            const timeIcon = isDay ? '☀️' : '🌙';
+            
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            this.ctx.beginPath();
+            this.ctx.roundRect(this.canvas.width - 100, 8, 42, 28, 8);
+            this.ctx.fill();
+            
+            this.ctx.font = '18px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(timeIcon, this.canvas.width - 79, 22);
+        }
+        
         this.ctx.restore();
     }
 
@@ -727,6 +1135,26 @@ class GameClient {
         events.forEach(event => {
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item';
+            
+            // Color code events by type
+            let eventColor = '#667eea';
+            if (event.includes('attacked') || event.includes('killed')) {
+                eventColor = '#f56565';
+            } else if (event.includes('reproduced')) {
+                eventColor = '#48bb78';
+            } else if (event.includes('claimed')) {
+                eventColor = '#9f7aea';
+            } else if (event.includes('cooperated') || event.includes('signaled')) {
+                eventColor = '#38b2ac';
+            } else if (event.includes('migrated')) {
+                eventColor = '#ed8936';
+            } else if (event.includes('EARTHQUAKE') || event.includes('FLOOD')) {
+                eventColor = '#ed8936';
+            } else if (event.includes('predator') || event.includes('Predator')) {
+                eventColor = '#c53030';
+            }
+            
+            eventItem.style.borderLeftColor = eventColor;
             eventItem.textContent = `[Turn ${this.gameState.turn}] ${event}`;
             eventsList.appendChild(eventItem);
         });
@@ -738,6 +1166,32 @@ class GameClient {
         const eventsDiv = document.getElementById('events');
         if (eventsDiv) {
             eventsDiv.scrollTop = eventsDiv.scrollHeight;
+        }
+    }
+
+    updateScoring(scoring) {
+        // Update scoring display if scoring panel exists
+        const scoringEl = document.getElementById('scoringPanel');
+        if (scoringEl && scoring.metrics) {
+            const metrics = scoring.metrics;
+            const achievements = scoring.unlocked_achievements || [];
+            
+            scoringEl.innerHTML = `
+                <h4 style="margin-top: 0; color: #1a1a2e;">Stats</h4>
+                <div style="font-size: 12px; color: #1a1a2e;">
+                    <p>Energy Efficiency: ${metrics.energy_efficiency?.toFixed(2) || 0}</p>
+                    <p>Reproductions: ${metrics.reproduction_count || 0}</p>
+                    <p>Kills: ${metrics.combat_kills || 0}</p>
+                    <p>Territories: ${metrics.territories_claimed || 0}</p>
+                    <p>Cooperations: ${metrics.cooperation_events || 0}</p>
+                </div>
+                ${achievements.length > 0 ? `
+                    <h4 style="margin-top: 15px; color: #1a1a2e;">Achievements</h4>
+                    <div style="font-size: 11px; color: #48bb78;">
+                        ${achievements.map(a => `🏆 ${a}`).join('<br>')}
+                    </div>
+                ` : ''}
+            `;
         }
     }
 

@@ -74,6 +74,49 @@ class HybridDecisionMaker:
         action = LLMResponseParser.parse(response)
         return action
 
+    async def decide_batch(self, creatures_with_states: list) -> dict:
+        """
+        Make batch decisions for multiple creatures in a single LLM call.
+        
+        Args:
+            creatures_with_states: List of tuples (cell, world_state)
+            
+        Returns:
+            Dict mapping creature_id to action dict
+        """
+        from .llm_prompt_builder import LLMPromptBuilder
+        from .llm_response_parser import LLMResponseParser
+        
+        if not creatures_with_states:
+            return {}
+        
+        # Build batch prompt
+        batch_prompt = LLMPromptBuilder.build_batch_prompt(creatures_with_states)
+        creature_ids = [cell.id for cell, _ in creatures_with_states]
+        
+        try:
+            # Call LLM with batch prompt (allow more tokens for batch)
+            response = await asyncio.wait_for(
+                self.llm_manager.chat(batch_prompt, max_tokens=100),
+                timeout=self.timeout
+            )
+            # Parse batch response
+            actions = LLMResponseParser.parse_batch(response, creature_ids)
+            print(f"[DEBUG] Batch LLM decision for {len(creatures_with_states)} creatures")
+            return actions
+        except (asyncio.TimeoutError, Exception) as e:
+            print(f"[WARNING] Batch LLM failed, falling back to individual calls: {e}")
+            # Fallback to individual calls
+            actions = {}
+            for cell, world_state in creatures_with_states:
+                try:
+                    action = await self._call_llm(cell, world_state)
+                    actions[cell.id] = action
+                except Exception as e2:
+                    print(f"[DEBUG] Individual LLM call failed for {cell.id}: {e2}")
+                    actions[cell.id] = self.rule_based_decision(cell, world_state)
+            return actions
+
     def is_critical_situation(self, cell, world_state: dict) -> bool:
         """
         Check if immediate action needed (don't wait for LLM).
@@ -129,6 +172,17 @@ class HybridDecisionMaker:
             action = {'action': 'flee', 'direction': direction}
             print(f"[DEBUG] Rule 3: Enemy nearby and weak, fleeing: {direction}")
             return action
+
+        # Rule 3.5: Attack enemy if energy >= 50 and enemy nearby
+        if energy >= 50 and nearby['enemy']:
+            enemy = nearby['enemy'][0]
+            if enemy['dist'] <= 1.5:
+                # Prefer attack if carnivore or if enemy is weaker
+                enemy_energy = enemy.get('energy', 50)
+                if cell.diet == 'carnivore' or energy > enemy_energy:
+                    action = {'action': 'attack', 'target_id': enemy['id']}
+                    print(f"[DEBUG] Rule 3.5: Attacking enemy {enemy['id']} (energy: {energy} vs {enemy_energy})")
+                    return action
 
         # Rule 4: High energy → reproduce (only if partner nearby)
         if energy >= 88:

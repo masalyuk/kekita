@@ -90,7 +90,8 @@ class Multicellular(Creature):
             'player_id': self.player_id,
             'colony_id': self.colony.id if self.colony else None,
             'colony_size': colony_size,
-            'sprite_url': getattr(self, 'sprite_url', None)
+            'sprite_url': getattr(self, 'sprite_url', None),
+            'custom_actions': self.traits.get('custom_actions', [])
         }
     
     def get_position(self):

@@ -164,6 +164,12 @@ class PromptParser:
             if original_size != size:
                 validation_log.append(f"size: '{original_size}' → '{size}'")
         
+        # Parse genetic variation (e.g., "offspring are 10% faster")
+        genetic_variation = PromptParser._parse_genetic_variation(prompt_text if 'prompt_text' in locals() else "")
+        
+        # Parse extended actions (e.g., "can signal others", "can claim territory")
+        custom_actions = PromptParser._parse_custom_actions(prompt_text if 'prompt_text' in locals() else "")
+        
         result = {
             'color': color,
             'speed': speed,
@@ -174,12 +180,97 @@ class PromptParser:
             'size': size
         }
         
+        # Add genetic variation and custom actions if found
+        if genetic_variation:
+            result['genetic_variation'] = genetic_variation
+        if custom_actions:
+            result['custom_actions'] = custom_actions
+        
         if validation_log:
             print(f"[PromptParser]   Validation changes: {', '.join(validation_log)}")
             if debug_info is not None:
                 debug_info['validation_changes'] = validation_log
         
         return result
+    
+    @staticmethod
+    def _parse_genetic_variation(text: str) -> dict:
+        """
+        Parse genetic variation from evolution prompt.
+        
+        Examples:
+            "offspring are 10% faster" -> {'speed': 0.1}
+            "offspring have different colors" -> {'color': 'varied'}
+            "offspring are stronger" -> {'strength': 0.1}
+        
+        Args:
+            text: Evolution description text
+            
+        Returns:
+            Dict with genetic variation modifiers
+        """
+        text_lower = text.lower()
+        variation = {}
+        
+        # Speed variation
+        speed_match = re.search(r'offspring.*?(\d+)%?\s*(?:faster|slower)', text_lower)
+        if speed_match:
+            percent = int(speed_match.group(1))
+            if 'faster' in text_lower:
+                variation['speed'] = percent / 100.0
+            else:
+                variation['speed'] = -percent / 100.0
+        elif re.search(r'offspring.*?(?:faster|quicker)', text_lower):
+            variation['speed'] = 0.1  # Default 10% faster
+        elif re.search(r'offspring.*?slower', text_lower):
+            variation['speed'] = -0.1  # Default 10% slower
+        
+        # Color variation
+        if re.search(r'offspring.*?(?:different|varied|random).*?color', text_lower):
+            variation['color'] = 'varied'
+        
+        # Strength/energy variation
+        if re.search(r'offspring.*?(?:stronger|more energy|tougher)', text_lower):
+            variation['strength'] = 0.1  # Default 10% stronger
+        
+        return variation if variation else None
+    
+    @staticmethod
+    def _parse_custom_actions(text: str) -> list:
+        """
+        Parse custom action types from evolution prompt.
+        
+        Examples:
+            "can signal others" -> ['signal']
+            "can claim territory" -> ['claim']
+            "can cooperate with others" -> ['cooperate']
+        
+        Args:
+            text: Evolution description text
+            
+        Returns:
+            List of custom action names
+        """
+        text_lower = text.lower()
+        actions = []
+        
+        # Signal action
+        if any(phrase in text_lower for phrase in ['can signal', 'can communicate', 'signals others', 'communicates with']):
+            actions.append('signal')
+        
+        # Claim territory action
+        if any(phrase in text_lower for phrase in ['can claim', 'claims territory', 'territorial', 'defends area']):
+            actions.append('claim')
+        
+        # Cooperate action
+        if any(phrase in text_lower for phrase in ['can cooperate', 'cooperates with', 'works together', 'shares food']):
+            actions.append('cooperate')
+        
+        # Migrate action (move to resource-rich areas)
+        if any(phrase in text_lower for phrase in ['can migrate', 'migrates to', 'seeks resources', 'finds better areas']):
+            actions.append('migrate')
+        
+        return actions if actions else None
     
     @staticmethod
     def _parse_keywords(prompt_text: str) -> dict:
@@ -402,7 +493,11 @@ class PromptParser:
         else:
             size = current_traits.get('size', 'medium')
         
-        return {
+        # Parse genetic variation and custom actions from evolution description
+        genetic_variation = PromptParser._parse_genetic_variation(evolution_description)
+        custom_actions = PromptParser._parse_custom_actions(evolution_description)
+        
+        result = {
             'color': color,
             'speed': speed,
             'diet': diet,
@@ -411,4 +506,12 @@ class PromptParser:
             'aggression': aggression,
             'size': size
         }
+        
+        # Add genetic variation and custom actions if found
+        if genetic_variation:
+            result['genetic_variation'] = genetic_variation
+        if custom_actions:
+            result['custom_actions'] = custom_actions
+        
+        return result
 

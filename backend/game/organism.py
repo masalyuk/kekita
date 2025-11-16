@@ -107,6 +107,7 @@ class Organism(Creature):
             'stage': self.stage,
             'player_id': self.player_id,
             'parts': self.parts.copy(),
-            'sprite_url': getattr(self, 'sprite_url', None)
+            'sprite_url': getattr(self, 'sprite_url', None),
+            'custom_actions': self.traits.get('custom_actions', [])
         }
 

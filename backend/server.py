@@ -35,6 +35,7 @@ llm_manager = LLMManager()  # For game decisions (qwen2:0.5b)
 llm_parser = LLMManager(model_name="qwen3:4b")  # For prompt parsing (larger model, higher temperature)
 sprite_generator = SpriteGenerator()  # For generating creature sprites
 game_state = {}  # Store active games: {game_id: {simulation, decision_maker, stage_controller, current_stage, prompts, ...}}
+total_attempts_global = 0  # Track total attempts across all games for evolution
 
 # Mount static files for sprite serving
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -108,6 +109,42 @@ def cleanup_user_sprites():
         print(f"[cleanup_user_sprites] Removed {removed_count} sprite file(s)")
 
 
+def get_stage_from_attempts(total_attempts):
+    """
+    Determine evolution stage based on total attempts.
+    
+    Args:
+        total_attempts: Total number of attempts across all games
+        
+    Returns:
+        Stage number (1, 2, or 3)
+    """
+    if total_attempts < 1000:
+        return 1  # Stage 1: Cell
+    elif total_attempts < 2000:
+        return 2  # Stage 2: Multicellular
+    else:
+        return 3  # Stage 3: Organism
+
+
+def get_llm_model_for_stage(stage):
+    """
+    Get LLM model name based on stage (more powerful models for higher stages).
+    
+    Args:
+        stage: Evolution stage (1, 2, or 3)
+        
+    Returns:
+        Model name string
+    """
+    if stage == 1:
+        return "qwen2:0.5b"  # Basic model for stage 1
+    elif stage == 2:
+        return "qwen2:1.5b"  # Medium model for stage 2 (or fallback to 0.5b if not available)
+    else:
+        return "qwen3:4b"  # Powerful model for stage 3
+
+
 def apply_trait_evolution(creature, new_traits):
     """
     Apply evolved traits to creature (merge with existing).
@@ -141,6 +178,8 @@ async def start_game(request: GameStartRequest):
 
     world = World(width=20, height=20)
     world.spawn_resources(num_food=50)  # Increased initial food amount
+    # Add special resources (water, shelter)
+    world.resource_manager.add_special_resources(num_water=3, num_shelter=2)
 
     # Store food_type_config in game state to persist across attempts
     food_type_config = world.food_type_config.copy()
@@ -188,19 +227,37 @@ async def start_game(request: GameStartRequest):
     stage_controller = StageController(stage_duration=20)
     stage_controller.start_stage(1)
 
+    # Determine stage based on total attempts
+    global total_attempts_global
+    current_stage = get_stage_from_attempts(total_attempts_global)
+    
+    # Get appropriate LLM model for this stage
+    stage_model = get_llm_model_for_stage(current_stage)
+    
+    # Create LLM manager for this stage (use existing if same model, otherwise create new)
+    stage_llm_manager = llm_manager
+    if stage_model != "qwen2:0.5b":
+        # For now, use existing manager (will need to handle model switching later)
+        print(f"[start_game] Stage {current_stage} would use model {stage_model}, but using default for now")
+    
+    # Update creatures to correct stage
+    for cell in world.cells:
+        cell.stage = current_stage
+    
     game_id = str(uuid.uuid4())
     game_state[game_id] = {
         'simulation': simulation,
         'decision_maker': decision_maker,
         'stage_controller': stage_controller,
-        'current_stage': 1,
+        'current_stage': current_stage,
         'prompt_history': [request.prompt],
         'current_traits': traits,
         'waiting_for_prompts': False,
         'attempt_number': 1,
         'max_attempts': 3,
         'waiting_for_prompt': False,
-        'food_type_config': food_type_config  # Store food config to persist across attempts
+        'food_type_config': food_type_config,  # Store food config to persist across attempts
+        'total_attempts': total_attempts_global  # Track total attempts
     }
 
     return {
@@ -421,7 +478,21 @@ async def _restart_attempt(game, world, request, current_stage):
         # Increment attempt number (before clearing flag so WebSocket loop can check)
         game['attempt_number'] += 1
         
-        print(f"[restart_attempt] ✓ Attempt restarted. New attempt number: {game['attempt_number']}")
+        # Update global attempt counter
+        global total_attempts_global
+        total_attempts_global += 1
+        game['total_attempts'] = total_attempts_global
+        
+        # Check if stage should change based on total attempts
+        new_stage = get_stage_from_attempts(total_attempts_global)
+        if new_stage != game.get('current_stage', 1):
+            game['current_stage'] = new_stage
+            # Update all creatures to new stage
+            for creature in world.cells:
+                creature.stage = new_stage
+            print(f"[restart_attempt] Stage evolved to {new_stage} (total attempts: {total_attempts_global})")
+        
+        print(f"[restart_attempt] ✓ Attempt restarted. New attempt number: {game['attempt_number']}, Total attempts: {total_attempts_global}")
         
         # Clear waiting flag to resume simulation
         game['waiting_for_prompt'] = False
@@ -609,7 +680,12 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     'creatures': step_result['creatures'],
                     'resources': step_result['resources']
                 },
-                'events': step_result['events'][-5:]  # Last 5 events
+                'events': step_result['events'][-5:],  # Last 5 events
+                'environment': step_result.get('environment'),
+                'territories': step_result.get('territories', {}),
+                'hazards': step_result.get('hazards', []),
+                'regions': step_result.get('regions', {}),
+                'scoring': step_result.get('scoring')
             })
             
             # Small delay between turns
