@@ -20,6 +20,7 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 class GameClient {
     constructor(canvasElement) {
         this.canvas = canvasElement;
+        this.creatureName = null;  // Store the creature name
         this.spriteCache = {}; // Cache for loaded sprites: {url: Image}
         this.pixelArtSpriteCache = {}; // Cache for generated pixel art sprites: {key: Image}
         this.foodSpriteCache = {}; // Cache for food sprites: {foodType: Image}
@@ -359,16 +360,19 @@ class GameClient {
         this.hoveredElement = null;
     }
 
-    async startGame(prompt) {
+    async startGame(prompt, creatureName) {
         try {
             // Reset confirmation state for new game
             this.confirmedPlayer = false;
+            
+            // Store creature name
+            this.creatureName = creatureName && creatureName.trim() ? creatureName.trim() : null;
             
             // Request backend to start game
             const response = await fetch('http://localhost:8000/start_game', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt })
+                body: JSON.stringify({ prompt, creature_name: creatureName || 'Unnamed' })
             });
 
             if (!response.ok) {
@@ -552,11 +556,25 @@ class GameClient {
                 const userCreatures = update.world.creatures.filter(c => c.player_id !== null && c.player_id !== undefined);
                 const predators = update.world.creatures.filter(c => c.player_id === null || c.player_id === undefined);
                 
+                // Update legend with creature name if available
+                if (userCreatures.length > 0) {
+                    const creatureName = userCreatures[0].name || this.creatureName || 'Your Creature';
+                    const legendNameEl = document.getElementById('legendCreatureName');
+                    if (legendNameEl) {
+                        legendNameEl.textContent = creatureName;
+                    }
+                    // Also store the name from the first creature if we don't have it
+                    if (!this.creatureName && userCreatures[0].name) {
+                        this.creatureName = userCreatures[0].name;
+                    }
+                }
+                
                 console.log(`[onGameUpdate] Received ${update.world.creatures.length} total creatures:`, {
                     userCreatures: userCreatures.length,
                     predators: predators.length,
                     userCreatureDetails: userCreatures.map(c => ({
                         id: c.id,
+                        name: c.name,
                         player_id: c.player_id,
                         x: c.x,
                         y: c.y,
@@ -564,7 +582,7 @@ class GameClient {
                         sprite_url: c.sprite_url || 'none',
                         alive: c.alive
                     })),
-                    predatorDetails: predators.length > 0 ? predators.map(p => ({id: p.id, x: p.x, y: p.y})) : []
+                    predatorDetails: predators.length > 0 ? predators.map(p => ({id: p.id, name: p.name, x: p.x, y: p.y})) : []
                 });
                 
                 if (userCreatures.length === 0) {
@@ -764,10 +782,11 @@ class GameClient {
         const player = results.player;
         const survived = results.survived;
         
+        const displayName = player.name || this.creatureName || 'Your Creature';
         content.innerHTML = `
             <h2>Game Results</h2>
             <div class="player-results">
-                <h3>Your Creature</h3>
+                <h3>${displayName}</h3>
                 <p><strong>Alive:</strong> ${player.alive ? 'Yes' : 'No'}</p>
                 <p><strong>Energy:</strong> ${player.energy}</p>
                 <p><strong>Age:</strong> ${player.age}</p>
@@ -775,7 +794,7 @@ class GameClient {
                 <p><strong>Color:</strong> ${player.color}</p>
                 <p><strong>Speed:</strong> ${player.speed}</p>
             </div>
-            ${survived ? `<p class="winner">You survived!</p>` : '<p class="winner">Your creature did not survive.</p>'}
+            ${survived ? `<p class="winner">${displayName} survived!</p>` : `<p class="winner">${displayName} did not survive.</p>`}
         `;
         
         modal.style.display = 'block';
@@ -805,10 +824,11 @@ class GameClient {
             `;
         }
         
+        const displayName = player.name || this.creatureName || 'Your Creature';
         content.innerHTML = `
             <h2 style="color: #1a1a2e; font-weight: 800; margin-top: 0;">Final Results - Game Complete!</h2>
             <div class="player-results">
-                <h3>Your Creature</h3>
+                <h3>${displayName}</h3>
                 <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Final Energy:</strong> <span style="color: #667eea; font-weight: 600;">${player.energy}</span></p>
                 <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Final Stage:</strong> <span style="color: #667eea; font-weight: 600;">${player.stage}</span></p>
                 <p style="margin: 8px 0;"><strong style="color: #1a1a2e;">Survived:</strong> <span style="color: ${survived ? '#48bb78' : '#f56565'}; font-weight: 600;">${survived ? 'Yes' : 'No'}</span></p>
@@ -821,7 +841,7 @@ class GameClient {
                 <p style="margin: 0 0 8px 0; font-weight: 700; color: #1a1a2e;">Final Prompt:</p>
                 <p style="margin: 0; color: #1a1a2e; font-style: italic; word-wrap: break-word;">"${prompt}"</p>
             </div>
-            ${survived ? `<p class="winner">🏆 You survived!</p>` : '<p class="winner">Your creature did not survive.</p>'}
+            ${survived ? `<p class="winner">🏆 ${displayName} survived!</p>` : `<p class="winner">${displayName} did not survive.</p>`}
             <button onclick="document.getElementById('resultsModal').style.display='none'" style="padding: 12px 24px; font-size: 14px; font-weight: 600; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; cursor: pointer; margin-top: 20px; width: 100%; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">Close</button>
         `;
         
@@ -955,7 +975,7 @@ class GameClient {
         switch (type) {
             case 'creature':
                 const isPlayer = data.player_id !== null && data.player_id !== undefined;
-                tooltipText = isPlayer ? 'Your Creature' : 'Creature';
+                tooltipText = data.name || (isPlayer ? 'Your Creature' : 'Creature');
                 tooltipColor = '#667eea';
                 break;
             case 'predator':
@@ -2125,35 +2145,15 @@ class GameClient {
 
     updatePreview(playerId, traits, spriteUrl, isEvolution = false) {
         const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
-        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
         const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
-        if (!previewDiv || !traitsGrid) {
+        if (!previewDiv) {
             console.error(`Preview elements not found for Player ${playerId}`);
             return;
         }
 
         console.log(`Updating preview for Player ${playerId} with traits:`, traits);
         previewDiv.classList.remove('loading');
-        traitsGrid.innerHTML = '';
-
-        const traitLabels = {
-            'color': 'Color',
-            'speed': 'Speed',
-            'diet': 'Diet',
-            'population': 'Population',
-            'social': 'Social',
-            'aggression': 'Aggression',
-            'size': 'Size'
-        };
-
-        for (const [key, label] of Object.entries(traitLabels)) {
-            const traitItem = document.createElement('div');
-            traitItem.className = 'trait-item';
-            const value = traits[key] !== undefined ? traits[key] : 'N/A';
-            traitItem.innerHTML = `<span class="trait-label">${label}:</span> <span class="trait-value">${value}</span>`;
-            traitsGrid.appendChild(traitItem);
-        }
 
         // Display sprite image if available
         if (spriteContainer && spriteUrl) {
@@ -2168,14 +2168,10 @@ class GameClient {
 
     clearPreview(playerId, isEvolution = false) {
         const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
-        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
         const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.remove('loading');
-        }
-        if (traitsGrid) {
-            traitsGrid.innerHTML = '<div style="color: #999; font-style: italic;">Enter a description to see traits...</div>';
         }
         if (spriteContainer) {
             spriteContainer.innerHTML = '';
@@ -2185,14 +2181,10 @@ class GameClient {
 
     showPreviewError(playerId, isEvolution = false) {
         const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
-        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
         const spriteContainer = document.getElementById(isEvolution ? `spriteUpdate${playerId}` : `sprite${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.remove('loading');
-        }
-        if (traitsGrid) {
-            traitsGrid.innerHTML = '<div style="color: #F44336;">Error parsing traits. Using defaults.</div>';
         }
         if (spriteContainer) {
             spriteContainer.innerHTML = '';
@@ -2202,13 +2194,9 @@ class GameClient {
 
     showPreviewLoading(playerId, isEvolution = false) {
         const previewDiv = document.getElementById(isEvolution ? `previewUpdate${playerId}` : `preview${playerId}`);
-        const traitsGrid = document.getElementById(isEvolution ? `traitsUpdate${playerId}` : `traits${playerId}`);
         
         if (previewDiv) {
             previewDiv.classList.add('loading');
-        }
-        if (traitsGrid) {
-            traitsGrid.innerHTML = '<div>Parsing traits...</div>';
         }
     }
 
@@ -2277,6 +2265,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startBtn.disabled = true;
         startBtn.onclick = () => {
             const prompt = document.getElementById('prompt1').value.trim();
+            const creatureName = document.getElementById('creatureName1').value.trim();
 
             if (!prompt) {
                 alert('Please enter a prompt!');
@@ -2286,7 +2275,7 @@ document.addEventListener('DOMContentLoaded', () => {
             startBtn.disabled = true;
             startBtn.textContent = 'Starting...';
             document.getElementById('eventsList').innerHTML = '';
-            client.startGame(prompt).then(() => {
+            client.startGame(prompt, creatureName).then(() => {
                 startBtn.disabled = false;
                 startBtn.textContent = 'Start Game';
             }).catch(error => {

@@ -52,7 +52,7 @@ class Colony:
 class Multicellular(Creature):
     """Stage 2: Multicellular organism (colony of cells)."""
     
-    def __init__(self, creature_id, traits, x, y, player_id=None, colony=None):
+    def __init__(self, creature_id, traits, x, y, player_id=None, colony=None, name=None):
         """
         Initialize a multicellular creature.
         
@@ -63,8 +63,9 @@ class Multicellular(Creature):
             y: Initial y position
             player_id: Player ID (1 or 2) that owns this creature
             colony: Optional Colony object to join
+            name: Name of the creature (optional)
         """
-        super().__init__(creature_id, traits, x, y, stage=2, player_id=player_id)
+        super().__init__(creature_id, traits, x, y, stage=2, player_id=player_id, name=name)
         self.colony = colony
         if colony:
             colony.add_member(self)
@@ -78,6 +79,7 @@ class Multicellular(Creature):
         colony_size = len(self.colony.members) if self.colony else 1
         return {
             'id': self.id,
+            'name': self.name,
             'x': self.x,
             'y': self.y,
             'energy': self.energy,

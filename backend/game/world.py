@@ -53,7 +53,7 @@ class World:
         
         self.territory_manager = TerritoryManager(self)
         self.social_system = SocialSystem(self)
-        self.environment = Environment(self)
+        self.environment = Environment(self, llm_parser=None)  # llm_parser will be set from server
         
         # Spatial index for performance
         from .spatial_index import SpatialIndex
@@ -416,15 +416,15 @@ class World:
                     # Track energy event: move action, no object, -move_cost energy
                     self.energy_events.add(('move', None, -move_cost))
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} moved to ({new_x}, {new_y})")
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} moved from ({old_x}, {old_y}) to ({new_x}, {new_y})")
+                    events.append(f"{stage_name} {creature.name} moved to ({new_x}, {new_y})")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} moved from ({old_x}, {old_y}) to ({new_x}, {new_y})")
                     detailed_events.append({
                         'creature_id': creature.id,
                         'type': 'move',
                         'location': (new_x, new_y)
                     })
                 else:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} movement blocked by collision at ({new_x}, {new_y})")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} movement blocked by collision at ({new_x}, {new_y})")
                 
                 # Check if creature moved away from shelter - auto-unhide
                 if creature.shelter_id is not None:
@@ -436,7 +436,7 @@ class World:
                             # Moved away from shelter
                             creature.shelter_id = None
                             stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                            events.append(f"{stage_name} {creature.id} left shelter")
+                            events.append(f"{stage_name} {creature.name} left shelter")
                     else:
                         # Shelter no longer exists
                         creature.shelter_id = None
@@ -458,7 +458,7 @@ class World:
                     if abs(creature.x - shelter_item['x']) <= 1 and abs(creature.y - shelter_item['y']) <= 1:
                         creature.shelter_id = shelter_item['id']
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} hid in shelter at ({shelter_item['x']}, {shelter_item['y']})")
+                        events.append(f"{stage_name} {creature.name} hid in shelter at ({shelter_item['x']}, {shelter_item['y']})")
                         detailed_events.append({
                             'creature_id': creature.id,
                             'type': 'hide',
@@ -467,10 +467,10 @@ class World:
                         })
                     else:
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to hide but not at shelter location")
+                        events.append(f"{stage_name} {creature.name} tried to hide but not at shelter location")
                 else:
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to hide but no shelter found")
+                    events.append(f"{stage_name} {creature.name} tried to hide but no shelter found")
 
             elif action_type == 'drink':
                 target_id = action.get('target_id')
@@ -489,9 +489,9 @@ class World:
                     
                     # Check resource competition - can creature access this resource?
                     if not self.resource_manager.can_access_resource(creature.id, water_item['id']):
-                        print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} cannot access water resource {water_item['id']} - claimed by another")
+                        print(f"[DEBUG] Turn {self.turn}: {creature.name} cannot access water resource {water_item['id']} - claimed by another")
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to drink water but it's claimed by another creature")
+                        events.append(f"{stage_name} {creature.name} tried to drink water but it's claimed by another creature")
                         continue
                     
                     # Claim resource if not already claimed
@@ -509,7 +509,7 @@ class World:
                     self.energy_events.add(('drink', 'water', energy_value))
                     
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} drank water at ({water_item['x']}, {water_item['y']}) - gained {energy_value} energy")
+                    events.append(f"{stage_name} {creature.name} drank water at ({water_item['x']}, {water_item['y']}) - gained {energy_value} energy")
                     
                     detailed_events.append({
                         'creature_id': creature.id,
@@ -520,7 +520,7 @@ class World:
                     })
                 else:
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to drink but no water found")
+                    events.append(f"{stage_name} {creature.name} tried to drink but no water found")
 
             elif action_type == 'eat':
                 target_id = action.get('target_id')
@@ -539,13 +539,13 @@ class World:
                     # Prevent eating water - should use drink action instead
                     if food_type == 'water':
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to eat water - use DRINK action instead")
+                        events.append(f"{stage_name} {creature.name} tried to eat water - use DRINK action instead")
                         continue
                     
                     # Prevent eating shelter - should use hide action instead
                     if food_type == 'shelter':
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to eat shelter - use HIDE action instead")
+                        events.append(f"{stage_name} {creature.name} tried to eat shelter - use HIDE action instead")
                         continue
                     
                     energy_value = food_item.get('energy_value', 0)
@@ -556,9 +556,9 @@ class World:
                     
                     # Check resource competition - can creature access this resource?
                     if not self.resource_manager.can_access_resource(creature.id, food_item['id']):
-                        print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} cannot access resource {food_item['id']} - claimed by another")
+                        print(f"[DEBUG] Turn {self.turn}: {creature.name} cannot access resource {food_item['id']} - claimed by another")
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to eat {food_type} but it's claimed by another creature")
+                        events.append(f"{stage_name} {creature.name} tried to eat {food_type} but it's claimed by another creature")
                         continue
                     
                     # Claim resource if not already claimed
@@ -579,7 +579,7 @@ class World:
                         creature.energy = 0
                         creature.alive = False
                         self.energy_events.add(('eat', food_type, energy_value))
-                        events.append(f"{stage_name} {creature.id} ate lethal {food_type} at ({food_item['x']}, {food_item['y']}) - DIED!")
+                        events.append(f"{stage_name} {creature.name} ate lethal {food_type} at ({food_item['x']}, {food_item['y']}) - DIED!")
                     else:
                         # Regular food - apply energy change
                         # Apply stage 3 bonus if applicable (only for positive energy)
@@ -589,11 +589,11 @@ class World:
                         if energy_value > 0:
                             creature.energy = min(100, creature.energy + energy_value)
                             self.energy_events.add(('eat', food_type, energy_value))
-                            events.append(f"{stage_name} {creature.id} ate {food_type} at ({food_item['x']}, {food_item['y']}) - gained {energy_value} energy")
+                            events.append(f"{stage_name} {creature.name} ate {food_type} at ({food_item['x']}, {food_item['y']}) - gained {energy_value} energy")
                         else:
                             creature.energy = max(0, creature.energy + energy_value)
                             self.energy_events.add(('eat', food_type, energy_value))
-                            events.append(f"{stage_name} {creature.id} ate {food_type} at ({food_item['x']}, {food_item['y']}) - lost {abs(energy_value)} energy!")
+                            events.append(f"{stage_name} {creature.name} ate {food_type} at ({food_item['x']}, {food_item['y']}) - lost {abs(energy_value)} energy!")
                     
                     detailed_events.append({
                         'creature_id': creature.id,
@@ -617,7 +617,7 @@ class World:
                         if abs(creature.x - shelter_item['x']) > 1 or abs(creature.y - shelter_item['y']) > 1:
                             creature.shelter_id = None
                             stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                            events.append(f"{stage_name} {creature.id} left shelter")
+                            events.append(f"{stage_name} {creature.name} left shelter")
                     else:
                         creature.shelter_id = None
                 # Fleeing costs more, but scales with speed (faster creatures flee more efficiently)
@@ -626,7 +626,7 @@ class World:
                 # Track energy event: flee action, no object, -flee_cost energy
                 self.energy_events.add(('flee', None, -flee_cost))
                 stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                events.append(f"{stage_name} {creature.id} fled to ({new_x}, {new_y})")
+                events.append(f"{stage_name} {creature.name} fled to ({new_x}, {new_y})")
                 detailed_events.append({
                     'creature_id': creature.id,
                     'type': 'flee',
@@ -658,7 +658,7 @@ class World:
                     if target_creature.shelter_id is not None:
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
                         target_stage_name = "Cell" if target_creature.stage == 1 else ("Multicellular" if target_creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} tried to attack {target_stage_name} {target_creature.id} but it's hidden in shelter!")
+                        events.append(f"{stage_name} {creature.name} tried to attack {target_stage_name} {target_creature.name} but it's hidden in shelter!")
                         continue
                     
                     # Resolve combat
@@ -668,9 +668,9 @@ class World:
                     target_stage_name = "Cell" if target_creature.stage == 1 else ("Multicellular" if target_creature.stage == 2 else "Organism")
                     
                     if defender_killed:
-                        events.append(f"{stage_name} {creature.id} attacked and killed {target_stage_name} {target_creature.id} (damage: {damage})")
+                        events.append(f"{stage_name} {creature.name} attacked and killed {target_stage_name} {target_creature.name} (damage: {damage})")
                         if energy_gained > 0:
-                            events.append(f"{stage_name} {creature.id} gained {energy_gained} energy from predation")
+                            events.append(f"{stage_name} {creature.name} gained {energy_gained} energy from predation")
                             self.energy_events.add(('attack', f"creature_{target_creature.id}", energy_gained))
                         detailed_events.append({
                             'creature_id': creature.id,
@@ -681,7 +681,7 @@ class World:
                             'energy_gained': energy_gained
                         })
                     else:
-                        events.append(f"{stage_name} {creature.id} attacked {target_stage_name} {target_creature.id} for {damage} damage")
+                        events.append(f"{stage_name} {creature.name} attacked {target_stage_name} {target_creature.name} for {damage} damage")
                         detailed_events.append({
                             'creature_id': creature.id,
                             'type': 'attack',
@@ -693,16 +693,16 @@ class World:
                     # Track energy event for attack cost
                     self.energy_events.add(('attack', None, -3))
                 else:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} attack failed - no valid target")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} attack failed - no valid target")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to attack but no valid target")
+                    events.append(f"{stage_name} {creature.name} tried to attack but no valid target")
 
             elif action_type == 'reproduce':
                 # Check if creature has enough energy
                 if creature.energy < 88:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} reproduction failed - insufficient energy ({creature.energy} < 88)")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} reproduction failed - insufficient energy ({creature.energy} < 88)")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to reproduce but lacks energy ({creature.energy}/88)")
+                    events.append(f"{stage_name} {creature.name} tried to reproduce but lacks energy ({creature.energy}/88)")
                     continue
                 
                 # Check if another creature is at the same position (meeting)
@@ -727,16 +727,16 @@ class World:
                 
                 # Need another creature to reproduce
                 if other_creature is None:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} reproduction failed - no partner nearby")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} reproduction failed - no partner nearby")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to reproduce but no partner nearby")
+                    events.append(f"{stage_name} {creature.name} tried to reproduce but no partner nearby")
                     continue
                 
                 # Both creatures must have energy >= 88
                 if other_creature.energy < 88:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} reproduction failed - partner {other_creature.id} has insufficient energy ({other_creature.energy} < 88)")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} reproduction failed - partner {other_creature.name} has insufficient energy ({other_creature.energy} < 88)")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to reproduce but partner {other_creature.id} lacks energy ({other_creature.energy}/88)")
+                    events.append(f"{stage_name} {creature.name} tried to reproduce but partner {other_creature.name} lacks energy ({other_creature.energy}/88)")
                     continue
                 
                 # Compatibility check: 70% base chance, modified by traits
@@ -751,9 +751,9 @@ class World:
                 compatibility_roll = random.random()
                 if compatibility_roll > compatibility:
                     # Creatures don't like each other, no reproduction
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} reproduction failed - compatibility check failed ({compatibility_roll:.2f} > {compatibility:.2f})")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} reproduction failed - compatibility check failed ({compatibility_roll:.2f} > {compatibility:.2f})")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} and {other_creature.id} tried to reproduce but were incompatible")
+                    events.append(f"{stage_name} {creature.name} and {other_creature.name} tried to reproduce but were incompatible")
                     continue
                 
                 # Both creatures meet requirements - one reproduces
@@ -789,6 +789,8 @@ class World:
                             # Apply strength variation (affects starting energy)
                             strength_modifier = genetic_variation.get('strength', 0.0)
                         
+                        # Generate offspring name based on parent names
+                        offspring_name = f"{creature.name}'s Offspring"
                         if creature.stage == 1:
                             from .cell import Cell
                             new_creature = Cell(
@@ -796,7 +798,8 @@ class World:
                                 traits=offspring_traits,
                                 x=new_x,
                                 y=new_y,
-                                player_id=creature.player_id
+                                player_id=creature.player_id,
+                                name=offspring_name
                             )
                         elif creature.stage == 2:
                             from .multicellular import Multicellular
@@ -805,7 +808,8 @@ class World:
                                 traits=offspring_traits,
                                 x=new_x,
                                 y=new_y,
-                                player_id=creature.player_id
+                                player_id=creature.player_id,
+                                name=offspring_name
                             )
                         else:  # stage 3
                             from .organism import Organism
@@ -814,7 +818,8 @@ class World:
                                 traits=offspring_traits,
                                 x=new_x,
                                 y=new_y,
-                                player_id=creature.player_id
+                                player_id=creature.player_id,
+                                name=offspring_name
                             )
                         
                         # Apply starting energy with strength modifier
@@ -832,7 +837,7 @@ class World:
                         self.add_cell(new_creature)
                         self._resource_id_counter += 1
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} and {other_creature.id} reproduced at ({new_x}, {new_y})")
+                        events.append(f"{stage_name} {creature.name} and {other_creature.name} reproduced at ({new_x}, {new_y})")
                         detailed_events.append({
                             'creature_id': creature.id,
                             'type': 'reproduce',
@@ -841,14 +846,14 @@ class World:
                             'partner_id': other_creature.id
                         })
                         reproduction_success = True
-                        print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} successfully reproduced with {other_creature.id}, created offspring {new_creature.id}")
+                        print(f"[DEBUG] Turn {self.turn}: {creature.name} successfully reproduced with {other_creature.name}, created offspring {new_creature.name}")
                         break
                 
                 # If no free space found for offspring
                 if not reproduction_success:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} reproduction failed - no free space for offspring")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} reproduction failed - no free space for offspring")
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} and {other_creature.id} tried to reproduce but no space available")
+                    events.append(f"{stage_name} {creature.name} and {other_creature.name} tried to reproduce but no space available")
 
             elif action_type == 'signal':
                 # Signal action - communicate with nearby creatures of same player
@@ -862,14 +867,14 @@ class World:
                     self.social_system.communicate(creature.id, 'signal', ally_ids)
                     
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} signaled {len(nearby_allies)} nearby allies")
+                    events.append(f"{stage_name} {creature.name} signaled {len(nearby_allies)} nearby allies")
                     detailed_events.append({
                         'creature_id': creature.id,
                         'type': 'signal',
                         'allies_count': len(nearby_allies)
                     })
                 else:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} signaled but no allies nearby")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} signaled but no allies nearby")
 
             elif action_type == 'claim':
                 # Claim territory action - claim current area
@@ -880,7 +885,7 @@ class World:
                 # Use territory manager
                 if self.territory_manager.claim_territory(region_key, creature.id):
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} claimed territory at region ({region_x}, {region_y})")
+                    events.append(f"{stage_name} {creature.name} claimed territory at region ({region_x}, {region_y})")
                     detailed_events.append({
                         'creature_id': creature.id,
                         'type': 'claim',
@@ -888,7 +893,7 @@ class World:
                     })
                 else:
                     stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                    events.append(f"{stage_name} {creature.id} tried to claim territory but it's already claimed")
+                    events.append(f"{stage_name} {creature.name} tried to claim territory but it's already claimed")
 
             elif action_type == 'cooperate':
                 # Cooperate action - share resources or work together
@@ -916,7 +921,7 @@ class World:
                         creature.energy -= share_amount
                         target_creature.energy = min(100, target_creature.energy + share_amount)
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} cooperated with {target_creature.id}, shared {share_amount} energy")
+                        events.append(f"{stage_name} {creature.name} cooperated with {target_creature.name}, shared {share_amount} energy")
                         detailed_events.append({
                             'creature_id': creature.id,
                             'type': 'cooperate',
@@ -925,7 +930,7 @@ class World:
                         })
                         self.energy_events.add(('cooperate', f"creature_{target_creature.id}", -share_amount))
                 else:
-                    print(f"[DEBUG] Turn {self.turn}: Creature {creature.id} tried to cooperate but no valid target")
+                    print(f"[DEBUG] Turn {self.turn}: {creature.name} tried to cooperate but no valid target")
 
             elif action_type == 'migrate':
                 # Migrate action - move toward resource-rich area
@@ -957,7 +962,7 @@ class World:
                         creature.energy -= migrate_cost
                         self.energy_events.add(('migrate', None, -migrate_cost))
                         stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                        events.append(f"{stage_name} {creature.id} migrated toward resource-rich area ({new_x}, {new_y})")
+                        events.append(f"{stage_name} {creature.name} migrated toward resource-rich area ({new_x}, {new_y})")
                         detailed_events.append({
                             'creature_id': creature.id,
                             'type': 'migrate',
@@ -977,7 +982,7 @@ class World:
             if creature.energy <= 0 and creature.alive:
                 creature.alive = False
                 stage_name = "Cell" if creature.stage == 1 else ("Multicellular" if creature.stage == 2 else "Organism")
-                events.append(f"{stage_name} {creature.id} died")
+                events.append(f"{stage_name} {creature.name} died")
                 detailed_events.append({
                     'creature_id': creature.id,
                     'type': 'death',

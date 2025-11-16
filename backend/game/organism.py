@@ -7,7 +7,7 @@ from .creature import Creature
 class Organism(Creature):
     """Stage 3: Complex organism with specialized parts."""
     
-    def __init__(self, creature_id, traits, x, y, player_id=None):
+    def __init__(self, creature_id, traits, x, y, player_id=None, name=None):
         """
         Initialize an organism.
         
@@ -17,8 +17,9 @@ class Organism(Creature):
             x: Initial x position
             y: Initial y position
             player_id: Player ID (1 or 2) that owns this creature
+            name: Name of the creature (optional)
         """
-        super().__init__(creature_id, traits, x, y, stage=3, player_id=player_id)
+        super().__init__(creature_id, traits, x, y, stage=3, player_id=player_id, name=name)
         
         # Generate specialized parts from traits
         self.parts = self._generate_parts(traits)
@@ -96,6 +97,7 @@ class Organism(Creature):
         """Serialize organism state for frontend."""
         return {
             'id': self.id,
+            'name': self.name,
             'x': self.x,
             'y': self.y,
             'energy': self.energy,

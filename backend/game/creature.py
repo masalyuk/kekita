@@ -10,7 +10,7 @@ class Creature(ABC):
     # Food types available in the world
     FOOD_TYPES = ['apple', 'banana', 'grapes']
     
-    def __init__(self, creature_id, traits, x, y, stage=1, player_id=None):
+    def __init__(self, creature_id, traits, x, y, stage=1, player_id=None, name=None):
         """
         Initialize a creature.
         
@@ -21,9 +21,11 @@ class Creature(ABC):
             y: Initial y position
             stage: Evolution stage (1, 2, or 3)
             player_id: Player ID (1 or 2) that owns this creature
+            name: Name of the creature (optional)
         """
         self.id = creature_id
         self.player_id = player_id
+        self.name = name or f"Creature {creature_id}"
         # Ensure color is a lowercase string
         color = traits.get('color', 'blue')
         self.color = str(color).lower().strip() if color else 'blue'

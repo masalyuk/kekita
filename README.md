@@ -26,7 +26,7 @@ A prompt-based evolution game inspired by Spore, where players describe creature
 
 **Frontend:**
 - Vanilla JavaScript
-- HTML5 Canvas
+- Phaser.js 3.80.1 (game rendering framework)
 - WebSocket API
 
 **External Services:**

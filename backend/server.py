@@ -59,6 +59,7 @@ async def test_sprite(prompt_hash: str, stage: int):
 
 class GameStartRequest(BaseModel):
     prompt: str
+    creature_name: str = "Unnamed"
 
 
 class PromptUpdateRequest(BaseModel):
@@ -178,6 +179,8 @@ async def start_game(request: GameStartRequest):
     traits = await PromptParser.parse(request.prompt, llm_manager=llm_manager)
 
     world = World(width=20, height=20)
+    # Set llm_parser for NPC name generation
+    world.environment.llm_parser = llm_parser
     world.spawn_resources(num_food=50)  # Increased initial food amount
     # Add special resources (water, shelter)
     world.resource_manager.add_special_resources(num_water=3, num_shelter=2)
@@ -213,8 +216,15 @@ async def start_game(request: GameStartRequest):
             x = random.randint(0, world.width - 1)
             y = random.randint(0, world.height - 1)
         
-        cell = Cell(creature_id=creature_id, traits=traits, x=x, y=y, player_id=1)
-        print(f"[start_game] Creature {creature_id} at ({x}, {y}), color: {cell.color}")
+        # Use the provided name for all player creatures
+        # If name is empty or "Unnamed", use a default based on creature ID
+        base_name = request.creature_name.strip() if request.creature_name and request.creature_name.strip() and request.creature_name.strip() != "Unnamed" else None
+        if base_name:
+            creature_name = base_name if creature_id == 1 else f"{base_name} {creature_id}"
+        else:
+            creature_name = f"Creature {creature_id}"
+        cell = Cell(creature_id=creature_id, traits=traits, x=x, y=y, player_id=1, name=creature_name)
+        print(f"[start_game] {creature_name} (ID: {creature_id}) at ({x}, {y}), color: {cell.color}")
         
         # Assign same sprite URL to all creatures from same prompt
         if sprite_url:

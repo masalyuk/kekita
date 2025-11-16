@@ -33,14 +33,16 @@ class BiomeType(Enum):
 class Environment:
     """Manages environmental conditions, weather, and disasters."""
     
-    def __init__(self, world):
+    def __init__(self, world, llm_parser=None):
         """
         Initialize environment system.
         
         Args:
             world: World instance
+            llm_parser: Optional LLM manager for generating NPC names (WORLD BIG model)
         """
         self.world = world
+        self.llm_parser = llm_parser
         self.weather: WeatherType = WeatherType.CLEAR
         self.weather_duration = 0
         self.weather_change_turn = 0
@@ -75,7 +77,18 @@ class Environment:
         # But we want to spawn when turn_counter reaches the interval
         if self.turn_counter > 0 and self.turn_counter % self.predator_spawn_interval == 0:
             print(f"[Environment] Turn {self.turn_counter}: Predator spawn check (interval: {self.predator_spawn_interval}), attempting spawn...")
-            self._spawn_predator()
+            # Note: _spawn_predator is now async, but we can't await here
+            # We'll spawn with a default name and update it asynchronously
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self._spawn_predator())
+                else:
+                    loop.run_until_complete(self._spawn_predator())
+            except RuntimeError:
+                # No event loop, spawn synchronously with default name
+                self._spawn_predator_sync()
         
         # Update predator AI
         self._update_predators()
@@ -142,8 +155,8 @@ class Environment:
         
         return modifier
 
-    def _spawn_predator(self):
-        """Spawn an NPC predator that hunts player creatures."""
+    def _spawn_predator_sync(self):
+        """Spawn an NPC predator synchronously with default name."""
         from .cell import Cell
         
         # Find a random position away from player creatures
@@ -187,14 +200,49 @@ class Environment:
             traits=predator_traits,
             x=x,
             y=y,
-            player_id=None  # NPC, no player
+            player_id=None,  # NPC, no player
+            name="Predator"  # Default name, will be updated async
         )
         predator.energy = 80  # Start with high energy
         self.world.add_cell(predator)
         self.world._resource_id_counter += 1
         self.predators.append(predator.id)
         
-        print(f"[Environment] ✓ Spawned predator {predator.id} at ({x}, {y}) with {predator.energy} energy. Total predators: {len(self.predators)}")
+        # Generate name asynchronously and update
+        if self.llm_parser:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self._generate_predator_name(predator))
+                else:
+                    loop.run_until_complete(self._generate_predator_name(predator))
+            except RuntimeError:
+                pass  # No event loop, keep default name
+        
+        print(f"[Environment] ✓ Spawned predator (ID: {predator.id}) at ({x}, {y}) with {predator.energy} energy. Total predators: {len(self.predators)}")
+    
+    async def _generate_predator_name(self, predator):
+        """Generate a name for the predator using LLM."""
+        try:
+            if self.llm_parser and self.llm_parser.session:
+                name_prompt = "Generate a creative name for a dangerous red predator creature that hunts other creatures. Return only the name, nothing else."
+                name_response = await self.llm_parser.generate(name_prompt, max_tokens=20)
+                if name_response:
+                    # Clean up the response - remove quotes, extra whitespace, etc.
+                    predator_name = name_response.strip().strip('"').strip("'").strip()
+                    # Limit name length
+                    if len(predator_name) > 30:
+                        predator_name = predator_name[:30]
+                    if predator_name:
+                        predator.name = predator_name
+                        print(f"[Environment] ✓ Generated name for predator {predator.id}: {predator_name}")
+        except Exception as e:
+            print(f"[Environment] Failed to generate predator name with LLM: {e}, keeping default")
+    
+    async def _spawn_predator(self):
+        """Spawn an NPC predator that hunts player creatures (async version)."""
+        self._spawn_predator_sync()
 
     def _update_predators(self):
         """Update predator AI - make them hunt player creatures."""
