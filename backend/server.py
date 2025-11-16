@@ -611,6 +611,72 @@ async def regenerate_sprites_for_evolved_creatures(game, evolved_creatures, new_
         print(f"[regenerate_sprites] ✗ Error regenerating sprite: {e}, keeping existing or using canvas")
 
 
+def build_initial_world_state(simulation, stage_controller):
+    """
+    Build initial world state payload without running a simulation step.
+    This is used to send the initial state right after game start.
+    
+    Args:
+        simulation: Simulation instance
+        stage_controller: StageController instance
+        
+    Returns:
+        Dict with world state similar to simulation.step() output
+    """
+    world = simulation.world
+    
+    # Get creatures data (all alive creatures)
+    creatures_data = [c.to_dict() for c in world.cells if c.alive]
+    print(f"[build_initial_world_state] Sending {len(creatures_data)} initial creatures to frontend")
+    
+    # Get environment data
+    environment_data = {
+        'weather': world.environment.weather.value if hasattr(world.environment.weather, 'value') else str(world.environment.weather),
+        'is_day': world.environment.is_day(),
+        'day_night_cycle': world.environment.day_night_cycle,
+        'biomes': world.environment.get_biome_map()
+    }
+    
+    # Get territory data
+    territories_data = {}
+    for region_key, territory in world.territory_manager.territories.items():
+        territories_data[f"{region_key[0]},{region_key[1]}"] = territory.owner_id
+    
+    # Get disasters data
+    disasters_data = []
+    for disaster in world.environment.active_disasters:
+        disasters_data.append({
+            'x': disaster['x'],
+            'y': disaster['y'],
+            'radius': disaster['radius'],
+            'type': disaster['type'].value if hasattr(disaster['type'], 'value') else str(disaster['type']),
+            'duration': disaster.get('duration', 0),
+            'elapsed': world.turn - disaster.get('turn', 0)
+        })
+    
+    # Get regions data (for density visualization)
+    regions_data = {}
+    for region_key, density in world.regions.items():
+        regions_data[f"{region_key[0]},{region_key[1]}"] = density
+    
+    # Get stage info
+    stage_info = stage_controller.get_stage_info()
+    
+    return {
+        'creatures': creatures_data,
+        'resources': {
+            'food': world.food,
+        },
+        'turn': world.turn,
+        'events': [],
+        'environment': environment_data,
+        'territories': territories_data,
+        'disasters': disasters_data,
+        'regions': regions_data,
+        'scoring': {}
+    }
+
+
 @app.websocket("/ws/{game_id}")
 async def websocket_endpoint(websocket: WebSocket, game_id: str):
     """WebSocket for real-time game updates with single continuous simulation."""
@@ -634,6 +700,33 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             'max_attempts': game['max_attempts'],
             'attempts_remaining': game['max_attempts'] - game['attempt_number'] + 1
         })
+        
+        # Send initial world state immediately so creatures appear right away
+        initial_state = build_initial_world_state(simulation, stage_controller)
+        stage_info = stage_controller.get_stage_info()
+        
+        initial_update = {
+            'status': 'update',
+            'turn': initial_state['turn'],
+            'stage': stage_info.get('stage', 1),
+            'time_remaining': stage_info.get('time_remaining', 60),
+            'attempt_number': game.get('attempt_number', 1),
+            'max_attempts': game.get('max_attempts', 3),
+            'attempts_remaining': game.get('max_attempts', 3) - game.get('attempt_number', 1) + 1,
+            'world': {
+                'creatures': initial_state['creatures'],
+                'resources': initial_state['resources']
+            },
+            'events': initial_state['events'],
+            'environment': initial_state['environment'],
+            'territories': initial_state['territories'],
+            'disasters': initial_state['disasters'],
+            'regions': initial_state['regions'],
+            'scoring': initial_state['scoring']
+        }
+        
+        await websocket.send_json(initial_update)
+        print(f"[websocket_endpoint] ✓ Sent initial world state with {len(initial_state['creatures'])} creatures")
         
         # Run continuous simulation until population dies or game ends
         while True:
